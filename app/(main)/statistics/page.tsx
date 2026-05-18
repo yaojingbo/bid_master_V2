@@ -452,13 +452,16 @@ export default function StatisticsPage() {
     abortRef.current = new AbortController();
 
     try {
-      const res = await authFetch("/api/statistics/analyze/comprehensive", {
+      // 使用 upload 版本，直接上传文件而不是依赖 fileId
+      const file = uploadedFileRef.current;
+      const formData = new FormData();
+      if (file) formData.append("file", file);
+      formData.append("modules", JSON.stringify(selectedModules));
+      formData.append("provider", "deepseek");
+
+      const res = await authFetch("/api/statistics/analyze/comprehensive/upload", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          fileId: uploadedFile.id,
-          modules: selectedModules,
-        }),
+        body: formData,
         signal: abortRef.current.signal,
       });
 
