@@ -1,0 +1,75 @@
+/**
+ * File management store using Zustand.
+ */
+import { create } from "zustand";
+import { persist } from "zustand/middleware";
+import type { FileUploadResponse } from "@/db/types";
+
+interface FileItem {
+  id: string;
+  name: string;
+  size: number;
+  mimeType: string;
+  category: string;
+  status: "uploading" | "processing" | "ready" | "error";
+  createdAt: string;
+  error?: string;
+}
+
+interface FileState {
+  files: FileItem[];
+  isUploading: boolean;
+  uploadProgress: number;
+
+  // Actions
+  addFile: (file: FileItem) => void;
+  removeFile: (id: string) => void;
+  updateFileStatus: (id: string, status: FileItem["status"], error?: string) => void;
+  replaceFileId: (oldId: string, newId: string) => void;
+  setUploading: (isUploading: boolean, progress?: number) => void;
+  clearFiles: () => void;
+}
+
+export const useFileStore = create<FileState>()(
+  persist(
+    (set) => ({
+      files: [],
+      isUploading: false,
+      uploadProgress: 0,
+
+      addFile: (file) => set((state) => ({
+        files: [...state.files, file],
+      })),
+
+      removeFile: (id) => set((state) => ({
+        files: state.files.filter((f) => f.id !== id),
+      })),
+
+      updateFileStatus: (id, status, error) => set((state) => ({
+        files: state.files.map((f) =>
+          f.id === id ? { ...f, status, error } : f
+        ),
+      })),
+
+      replaceFileId: (oldId, newId) => set((state) => ({
+        files: state.files.map((f) =>
+          f.id === oldId ? { ...f, id: newId } : f
+        ),
+      })),
+
+      setUploading: (isUploading, progress = 0) => set(() => ({
+        isUploading,
+        uploadProgress: progress,
+      })),
+
+      clearFiles: () => set(() => ({
+        files: [],
+        isUploading: false,
+        uploadProgress: 0,
+      })),
+    }),
+    {
+      name: "bid-master-file-store",
+    }
+  )
+);

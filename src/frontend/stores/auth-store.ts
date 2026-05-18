@@ -1,0 +1,101 @@
+/**
+ * 认证状态管理（zustand）。
+ * accessToken 仅存储在内存中（不 persist）。
+ * refresh_token 由后端设为 httpOnly cookie，前端无法直接读取。
+ */
+import { create } from "zustand";
+import { authLogin, authRegister, authRefresh, authMe } from "@/lib/auth-api";
+
+interface User {
+  id: string;
+  username: string;
+  email?: string;
+  role: string;
+}
+
+interface AuthState {
+  user: User | null;
+  accessToken: string | null;
+  isAuthenticated: boolean;
+  isLoading: boolean;
+  login: (email: string, password: string) => Promise<void>;
+  register: (email: string, password: string, username?: string) => Promise<void>;
+  logout: () => void;
+  refreshAccessToken: () => Promise<string | null>;
+  initAuth: () => Promise<void>;
+}
+
+export const useAuthStore = create<AuthState>((set, get) => ({
+  user: null,
+  accessToken: null,
+  isAuthenticated: false,
+  isLoading: false,
+
+  login: async (email, password) => {
+    set({ isLoading: true });
+    try {
+      const res = await authLogin(email, password);
+      set({
+        accessToken: res.access_token,
+        user: res.user,
+        isAuthenticated: true,
+        isLoading: false,
+      });
+    } catch (err) {
+      set({ isLoading: false });
+      throw err;
+    }
+  },
+
+  register: async (email, password, username) => {
+    set({ isLoading: true });
+    try {
+      const res = await authRegister(email, password, username);
+      set({
+        accessToken: res.access_token,
+        user: res.user,
+        isAuthenticated: true,
+        isLoading: false,
+      });
+    } catch (err) {
+      set({ isLoading: false });
+      throw err;
+    }
+  },
+
+  logout: () => {
+    fetch("/api/auth/logout", { method: "POST" }).catch(() => {});
+    set({ accessToken: null, user: null, isAuthenticated: false });
+  },
+
+  refreshAccessToken: async () => {
+    try {
+      const res = await authRefresh();
+      set({ accessToken: res.access_token, isAuthenticated: true });
+      // refresh 成功后获取用户信息
+      const user = await authMe(res.access_token);
+      set({ user });
+      return res.access_token;
+    } catch {
+      set({ accessToken: null, user: null, isAuthenticated: false });
+      return null;
+    }
+  },
+
+  initAuth: async () => {
+    const { accessToken, refreshAccessToken } = get();
+    if (accessToken) {
+      try {
+        const user = await authMe(accessToken);
+        set({ user, isAuthenticated: true });
+      } catch {
+        const newToken = await refreshAccessToken();
+        if (!newToken) set({ isAuthenticated: false });
+      }
+    } else {
+      // accessToken 为空，尝试通过 httpOnly cookie 中的 refresh_token 刷新
+      const newToken = await refreshAccessToken();
+      if (!newToken) set({ isAuthenticated: false });
+    }
+  },
+}));
