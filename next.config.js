@@ -1,13 +1,15 @@
+/** @type {import('next').NextConfig} */
 const config = {
   reactStrictMode: true,
   eslint: { ignoreDuringBuilds: true },
   async rewrites() {
-    // 生产环境通过 NEXT_PUBLIC_API_URL 直接调用 Railway 后端
-    if (process.env.NODE_ENV === "production") return [];
+    const backend = process.env.NODE_ENV === "production"
+      ? "https://bidmasterv2-production.up.railway.app"
+      : "http://localhost:8000";
     return [
       {
         source: "/api/:path*",
-        destination: "http://localhost:8000/api/:path*",
+        destination: `${backend}/api/:path*`,
       },
     ];
   },
