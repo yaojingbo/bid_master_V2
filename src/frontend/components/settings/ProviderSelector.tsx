@@ -4,7 +4,7 @@ import { Check } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { AI_PROVIDERS, AIProviderId } from "@/frontend/constants/providers";
+import { AI_PROVIDERS, AIProviderId } from "@/constants/providers";
 
 interface ProviderSelectorProps {
   activeProviderId: AIProviderId;

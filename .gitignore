@@ -61,3 +61,5 @@ tsconfig.tsbuildinfo
 resource
 notes/
 .env
+.vercel
+.env*.local

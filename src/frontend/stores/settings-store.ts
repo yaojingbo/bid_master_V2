@@ -63,7 +63,7 @@ export const useSettingsStore = create<SettingsState>()(
         }));
       },
 
-      setActiveModel: (model) => set(() => ({ activeModel })),
+      setActiveModel: (model) => set(() => ({ activeModel: model })),
 
       setTesting: (isTesting) => set(() => ({ isTesting })),
 
