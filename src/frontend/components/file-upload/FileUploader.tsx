@@ -67,14 +67,13 @@ export function FileUploader({
   );
 
   return (
-    <div
+    <label
       data-testid="upload-area"
       className={cn(
-        "border-2 border-dashed rounded-lg p-8 text-center transition-colors",
+        "border-2 border-dashed rounded-lg p-8 text-center transition-colors cursor-pointer flex flex-col items-center gap-4",
         isDragging ? "border-primary bg-primary/5" : "hover:border-primary/50",
         className
       )}
-      onClick={() => fileInputRef.current?.click()}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
@@ -83,27 +82,25 @@ export function FileUploader({
         type="file"
         ref={fileInputRef}
         data-testid="file-input"
-        className="hidden"
+        className="sr-only"
         accept={accept}
         onChange={handleFileSelect}
       />
-      <div className="cursor-pointer flex flex-col items-center gap-4">
-        {isUploading ? (
-          <div className="rounded-full bg-primary/10 p-4">
-            <Loader2 className="h-8 w-8 text-primary animate-spin" />
-          </div>
-        ) : (
-          <div className="rounded-full bg-primary/10 p-4">
-            <Upload className="h-8 w-8 text-primary" />
-          </div>
-        )}
-        <div>
-          <p className="text-lg font-medium">点击或拖拽文件到此区域</p>
-          <p className="text-sm text-muted-foreground">
-            支持 PDF、Markdown、Word、Excel（最大 50MB）
-          </p>
+      {isUploading ? (
+        <div className="rounded-full bg-primary/10 p-4">
+          <Loader2 className="h-8 w-8 text-primary animate-spin" />
         </div>
+      ) : (
+        <div className="rounded-full bg-primary/10 p-4">
+          <Upload className="h-8 w-8 text-primary" />
+        </div>
+      )}
+      <div>
+        <p className="text-lg font-medium">点击或拖拽文件到此区域</p>
+        <p className="text-sm text-muted-foreground">
+          支持 PDF、Markdown、Word、Excel（最大 50MB）
+        </p>
       </div>
-    </div>
+    </label>
   );
 }

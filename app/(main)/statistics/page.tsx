@@ -536,12 +536,11 @@ export default function StatisticsPage() {
       <PageHeader title="开标分析" description="智能解析开标一览表，自动计算报价排名、降价幅度、离散系数" />
 
       {/* 文件上传 */}
-      <div
+      <label
         className={cn(
-          "border-2 border-dashed rounded-xl p-10 text-center transition-colors",
+          "border-2 border-dashed rounded-xl p-10 text-center transition-colors cursor-pointer flex flex-col items-center gap-4",
           isDragging ? "border-primary bg-primary/5" : "hover:border-primary/50"
         )}
-        onClick={() => fileInputRef.current?.click()}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
@@ -549,20 +548,18 @@ export default function StatisticsPage() {
         <input
           type="file"
           ref={fileInputRef}
-          className="hidden"
+          className="sr-only"
           accept=".xlsx,.xls,.csv"
           onChange={handleUpload}
         />
-        <div className="cursor-pointer flex flex-col items-center gap-4">
-          <div className="h-12 w-12 rounded-full bg-primary/10 p-3">
-            <Upload className="h-6 w-6 text-primary" />
-          </div>
-          <div>
-            <p className="text-lg font-medium">点击或拖拽开标数据文件</p>
-            <p className="text-sm text-muted-foreground">
-              支持 Excel (.xlsx/.xls) 和 CSV 格式
-            </p>
-          </div>
+        <div className="h-12 w-12 rounded-full bg-primary/10 p-3">
+          <Upload className="h-6 w-6 text-primary" />
+        </div>
+        <div>
+          <p className="text-lg font-medium">点击或拖拽开标数据文件</p>
+          <p className="text-sm text-muted-foreground">
+            支持 Excel (.xlsx/.xls) 和 CSV 格式
+          </p>
         </div>
         {uploadedFile && (
           <p className="mt-3 text-sm text-success flex items-center gap-1">
@@ -570,7 +567,7 @@ export default function StatisticsPage() {
             已选择: {uploadedFile.name}
           </p>
         )}
-      </div>
+      </label>
 
       {/* 列选择：勾选后直接分析 */}
       {uploadedFile && rawHeaders.length > 0 && !result && (

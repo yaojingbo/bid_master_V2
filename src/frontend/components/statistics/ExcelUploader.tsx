@@ -62,7 +62,6 @@ export function ExcelUploader({
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
-      onClick={() => fileInputRef.current?.click()}
     >
       <CardContent className="flex flex-col items-center justify-center p-8">
         {selectedFile ? (
@@ -99,7 +98,7 @@ export function ExcelUploader({
           type="file"
           accept={acceptedFormats.join(",")}
           onChange={handleFileChange}
-          className="hidden"
+          className="sr-only"
         />
       </CardContent>
     </Card>

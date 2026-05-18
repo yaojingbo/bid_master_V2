@@ -387,12 +387,11 @@ export default function SimulatePage() {
       {/* 创建任务区域 */}
       {!task && (
         <>
-          <div
+          <label
             className={cn(
-              "border-2 border-dashed rounded-xl p-10 text-center transition-colors",
+              "border-2 border-dashed rounded-xl p-10 text-center transition-colors cursor-pointer flex flex-col items-center gap-4",
               isDragging ? "border-primary bg-primary/5" : "hover:border-primary/50"
             )}
-            onClick={() => fileInputRef.current?.click()}
             onDragOver={handleDragOver}
             onDragLeave={handleDragLeave}
             onDrop={handleDrop}
@@ -400,20 +399,18 @@ export default function SimulatePage() {
             <input
               type="file"
               ref={fileInputRef}
-              className="hidden"
+              className="sr-only"
               accept=".pdf,.md,.doc,.docx"
               onChange={handleUpload}
             />
-            <div className="cursor-pointer flex flex-col items-center gap-4">
-              <div className="h-12 w-12 rounded-full bg-primary/10 p-3">
-                <Upload className="h-6 w-6 text-primary" />
-              </div>
-              <div>
-                <p className="text-lg font-medium">点击上传招标文件</p>
-                <p className="text-sm text-muted-foreground">
-                  支持 PDF、Markdown、Word 格式
-                </p>
-              </div>
+            <div className="h-12 w-12 rounded-full bg-primary/10 p-3">
+              <Upload className="h-6 w-6 text-primary" />
+            </div>
+            <div>
+              <p className="text-lg font-medium">点击上传招标文件</p>
+              <p className="text-sm text-muted-foreground">
+                支持 PDF、Markdown、Word 格式
+              </p>
             </div>
             {uploadingFile && (
               <p className="mt-3 text-sm text-muted-foreground flex items-center gap-1">
@@ -427,7 +424,7 @@ export default function SimulatePage() {
                 已上传 {files.length} 个文件
               </p>
             )}
-          </div>
+          </label>
 
           <button
             onClick={handleCreateTask}

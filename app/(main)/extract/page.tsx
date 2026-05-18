@@ -474,26 +474,23 @@ export default function ExtractPage() {
       <TabNavigation tabs={tabs} activeTab={activeTab} onTabChange={setActiveTab} />
 
       {/* 上传区域 */}
-      <div
-        data-testid="upload-area"
-        className={cn(
-          "border-2 border-dashed rounded-xl p-10 text-center transition-colors",
-          isDragging ? "border-primary bg-primary/5" : "hover:border-primary/50"
-        )}
-        onClick={() => fileInputRef.current?.click()}
-        onDragOver={handleDragOver}
-        onDragLeave={handleDragLeave}
-        onDrop={handleDrop}
-      >
-        <input
-          type="file"
-          ref={fileInputRef}
-          data-testid="file-input"
-          className="hidden"
-          accept=".pdf,.md,.doc,.docx,.xlsx,.xls"
-          onChange={handleUpload}
-        />
-        <div className="cursor-pointer flex flex-col items-center gap-4">
+      <label
+          className={cn(
+            "border-2 border-dashed rounded-xl p-10 text-center transition-colors cursor-pointer flex flex-col items-center gap-4",
+            isDragging ? "border-primary bg-primary/5" : "hover:border-primary/50"
+          )}
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onDrop={handleDrop}
+        >
+          <input
+            type="file"
+            ref={fileInputRef}
+            data-testid="file-input"
+            className="sr-only"
+            accept=".pdf,.md,.doc,.docx,.xlsx,.xls"
+            onChange={handleUpload}
+          />
           <div className="h-12 w-12 rounded-full bg-primary/10 p-3">
             <Upload className="h-6 w-6 text-primary" />
           </div>
@@ -503,8 +500,7 @@ export default function ExtractPage() {
               支持 PDF、Markdown、Word、Excel（最大 50MB）
             </p>
           </div>
-        </div>
-      </div>
+        </label>
 
       {/* 文件列表 + 选项区 分栏布局（单文件提取模式） */}
       {activeTab === "single" && displayFiles.length > 0 && (
