@@ -71,6 +71,8 @@ export default function SimulatePage() {
     region: "",
     special_requirements: "",
   });
+  const [isDragging, setIsDragging] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const abortRef = useRef<AbortController | null>(null);
 
   // ===========================================================================
@@ -166,6 +168,26 @@ export default function SimulatePage() {
 
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    if (!file) return;
+    setUploadingFile(file.name);
+    await upload(file);
+    setUploadingFile(null);
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+  };
+
+  const handleDrop = async (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+    const file = e.dataTransfer.files[0];
     if (!file) return;
     setUploadingFile(file.name);
     await upload(file);
@@ -365,18 +387,24 @@ export default function SimulatePage() {
       {/* 创建任务区域 */}
       {!task && (
         <>
-          <div className="border-2 border-dashed rounded-xl p-10 text-center hover:border-primary/50 transition-colors">
+          <div
+            className={cn(
+              "border-2 border-dashed rounded-xl p-10 text-center transition-colors",
+              isDragging ? "border-primary bg-primary/5" : "hover:border-primary/50"
+            )}
+            onClick={() => fileInputRef.current?.click()}
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
+          >
             <input
               type="file"
-              id="sim-file-upload"
+              ref={fileInputRef}
               className="hidden"
               accept=".pdf,.md,.doc,.docx"
               onChange={handleUpload}
             />
-            <label
-              htmlFor="sim-file-upload"
-              className="cursor-pointer flex flex-col items-center gap-4"
-            >
+            <div className="cursor-pointer flex flex-col items-center gap-4">
               <div className="h-12 w-12 rounded-full bg-primary/10 p-3">
                 <Upload className="h-6 w-6 text-primary" />
               </div>
@@ -386,7 +414,7 @@ export default function SimulatePage() {
                   支持 PDF、Markdown、Word 格式
                 </p>
               </div>
-            </label>
+            </div>
             {uploadingFile && (
               <p className="mt-3 text-sm text-muted-foreground flex items-center gap-1">
                 <Loader2 className="h-4 w-4 animate-spin" />

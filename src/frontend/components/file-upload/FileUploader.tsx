@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useRef, useState } from "react";
 import { Upload, X, FileText, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -19,6 +19,7 @@ export function FileUploader({
 }: FileUploaderProps) {
   const [isDragging, setIsDragging] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -73,19 +74,20 @@ export function FileUploader({
         isDragging ? "border-primary bg-primary/5" : "hover:border-primary/50",
         className
       )}
+      onClick={() => fileInputRef.current?.click()}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
       <input
         type="file"
-        id="file-upload"
+        ref={fileInputRef}
         data-testid="file-input"
         className="hidden"
         accept={accept}
         onChange={handleFileSelect}
       />
-      <label htmlFor="file-upload" className="cursor-pointer flex flex-col items-center gap-4">
+      <div className="cursor-pointer flex flex-col items-center gap-4">
         {isUploading ? (
           <div className="rounded-full bg-primary/10 p-4">
             <Loader2 className="h-8 w-8 text-primary animate-spin" />
@@ -101,7 +103,7 @@ export function FileUploader({
             支持 PDF、Markdown、Word、Excel（最大 50MB）
           </p>
         </div>
-      </label>
+      </div>
     </div>
   );
 }

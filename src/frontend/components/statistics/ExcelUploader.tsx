@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { Upload, FileSpreadsheet, X } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
@@ -18,6 +18,7 @@ export function ExcelUploader({
 }: ExcelUploaderProps) {
   const [isDragging, setIsDragging] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
@@ -61,7 +62,7 @@ export function ExcelUploader({
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
-      onClick={() => document.getElementById("excel-upload-input")?.click()}
+      onClick={() => fileInputRef.current?.click()}
     >
       <CardContent className="flex flex-col items-center justify-center p-8">
         {selectedFile ? (
@@ -94,7 +95,7 @@ export function ExcelUploader({
         )}
 
         <input
-          id="excel-upload-input"
+          ref={fileInputRef}
           type="file"
           accept={acceptedFormats.join(",")}
           onChange={handleFileChange}

@@ -142,6 +142,8 @@ export default function StatisticsPage() {
   } | null>(null);
   const [aiContent, setAiContent] = useState("");
   const [aiStreaming, setAiStreaming] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const uploadedFileRef = useRef<File | null>(null);
 
@@ -322,6 +324,61 @@ export default function StatisticsPage() {
     await parseFileForModules(file);
   };
 
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+  };
+
+  const handleDrop = async (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+    const file = e.dataTransfer.files[0];
+    if (!file) return;
+    uploadedFileRef.current = file;
+
+    setResult(null);
+    setAiContent("");
+    setAvailableModules([]);
+    setSelectedModules([]);
+    setSelectAllModules(false);
+    setRawHeaders([]);
+    setColumnMapping({});
+    setSelectedColumns([]);
+    setParsedMeta({});
+    setParseError(null);
+    setSelectionStep(1);
+    useTaskStore.getState().clearStatistics();
+
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("category", "opening");
+
+    try {
+      const res = await authFetch("/api/files/upload", {
+        method: "POST",
+        body: formData,
+      });
+      const data = await res.json();
+      if (data.id || data.success) {
+        setUploadedFile({
+          id: data.id || data.data?.id || `file-${Date.now()}`,
+          name: file.name,
+        });
+      } else {
+        setUploadedFile({ id: `local-${Date.now()}`, name: file.name });
+      }
+    } catch {
+      setUploadedFile({ id: `local-${Date.now()}`, name: file.name });
+    }
+
+    await parseFileForModules(file);
+  };
+
   const [analyzeError, setAnalyzeError] = useState<string | null>(null);
   const [parseError, setParseError] = useState<string | null>(null);
 
@@ -479,18 +536,24 @@ export default function StatisticsPage() {
       <PageHeader title="开标分析" description="智能解析开标一览表，自动计算报价排名、降价幅度、离散系数" />
 
       {/* 文件上传 */}
-      <div className="border-2 border-dashed rounded-xl p-10 text-center hover:border-primary/50 transition-colors">
+      <div
+        className={cn(
+          "border-2 border-dashed rounded-xl p-10 text-center transition-colors",
+          isDragging ? "border-primary bg-primary/5" : "hover:border-primary/50"
+        )}
+        onClick={() => fileInputRef.current?.click()}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+      >
         <input
           type="file"
-          id="file-upload"
+          ref={fileInputRef}
           className="hidden"
           accept=".xlsx,.xls,.csv"
           onChange={handleUpload}
         />
-        <label
-          htmlFor="file-upload"
-          className="cursor-pointer flex flex-col items-center gap-4"
-        >
+        <div className="cursor-pointer flex flex-col items-center gap-4">
           <div className="h-12 w-12 rounded-full bg-primary/10 p-3">
             <Upload className="h-6 w-6 text-primary" />
           </div>
@@ -500,7 +563,7 @@ export default function StatisticsPage() {
               支持 Excel (.xlsx/.xls) 和 CSV 格式
             </p>
           </div>
-        </label>
+        </div>
         {uploadedFile && (
           <p className="mt-3 text-sm text-success flex items-center gap-1">
             <CheckCircle className="h-4 w-4" />
