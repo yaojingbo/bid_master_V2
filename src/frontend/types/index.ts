@@ -7,9 +7,9 @@ export interface FileItem {
   id: string;
   name: string;
   size: number;
-  type: string;
+  type?: string;
   category?: string;
-  status?: "uploading" | "ready" | "error";
+  status: "uploading" | "processing" | "ready" | "error";
   progress?: number;
   uploadedAt?: string;
 }
