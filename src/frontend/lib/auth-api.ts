@@ -22,6 +22,7 @@ export async function authLogin(email: string, password: string): Promise<LoginR
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email, password }),
+    credentials: "include",
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
@@ -35,6 +36,7 @@ export async function authRegister(email: string, password: string, username?: s
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email, password, username }),
+    credentials: "include",
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
@@ -58,6 +60,7 @@ export async function authRefresh(): Promise<RefreshResponse> {
 export async function authMe(token: string): Promise<{ id: string; username: string; role: string; email?: string }> {
   const res = await fetch(`${API_BASE}/api/auth/me`, {
     headers: { Authorization: `Bearer ${token}` },
+    credentials: "include",
   });
   if (!res.ok) {
     throw new Error(`获取用户信息失败: HTTP ${res.status}`);

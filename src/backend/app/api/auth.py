@@ -65,6 +65,7 @@ async def register(request: RegisterRequest, response: Response):
         refresh_token,
         max_age=settings.jwt_refresh_token_expire_days * 86400,
         httponly=True,
+        secure=True,
         samesite="lax",
     )
 
@@ -104,6 +105,7 @@ async def login(request: LoginRequest, response: Response):
         refresh_token,
         max_age=settings.jwt_refresh_token_expire_days * 86400,
         httponly=True,
+        secure=True,
         samesite="lax",
     )
 
@@ -142,7 +144,7 @@ async def refresh(request: Request):
 @router.post("/logout")
 async def logout(response: Response):
     """退出登录，清除 refresh_token cookie。"""
-    response.delete_cookie("refresh_token")
+    response.delete_cookie("refresh_token", secure=True)
     return {"success": True, "message": "已退出登录"}
 
 

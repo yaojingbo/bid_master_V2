@@ -14,14 +14,14 @@ export async function authFetch(url: string, options?: RequestInit): Promise<Res
   }
 
   const fullUrl = url.startsWith("/") ? `${API_BASE}${url}` : url;
-  const response = await fetch(fullUrl, { ...options, headers });
+  const response = await fetch(fullUrl, { ...options, headers, credentials: "include" });
 
   if (response.status === 401) {
     // 尝试刷新 token
     const newToken = await useAuthStore.getState().refreshAccessToken();
     if (newToken) {
       headers.set("Authorization", `Bearer ${newToken}`);
-      return fetch(fullUrl, { ...options, headers });
+      return fetch(fullUrl, { ...options, headers, credentials: "include" });
     }
     // refresh 失败，退出登录
     useAuthStore.getState().logout();
