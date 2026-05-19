@@ -1,6 +1,7 @@
 """
 Authentication API routes: register, login, refresh, logout, me.
 """
+import os
 from fastapi import APIRouter, HTTPException, Response, Request
 from app.models.schemas import RegisterRequest, LoginRequest, RefreshRequest
 from app.infrastructure.mock_storage import add_user, get_user_by_username, get_user_by_email, get_user_by_id
@@ -11,6 +12,8 @@ from app.utils.crypto import (
 from app.config import get_settings
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+_IS_PRODUCTION = os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("RENDER") or os.getenv("FLY_APP_NAME")
 
 
 @router.post("/register")
@@ -65,7 +68,7 @@ async def register(request: RegisterRequest, response: Response):
         refresh_token,
         max_age=settings.jwt_refresh_token_expire_days * 86400,
         httponly=True,
-        secure=True,
+        secure=bool(_IS_PRODUCTION),
         samesite="lax",
     )
 
@@ -105,7 +108,7 @@ async def login(request: LoginRequest, response: Response):
         refresh_token,
         max_age=settings.jwt_refresh_token_expire_days * 86400,
         httponly=True,
-        secure=True,
+        secure=bool(_IS_PRODUCTION),
         samesite="lax",
     )
 
@@ -144,7 +147,7 @@ async def refresh(request: Request):
 @router.post("/logout")
 async def logout(response: Response):
     """退出登录，清除 refresh_token cookie。"""
-    response.delete_cookie("refresh_token", secure=True)
+    response.delete_cookie("refresh_token", secure=bool(_IS_PRODUCTION))
     return {"success": True, "message": "已退出登录"}
 
 

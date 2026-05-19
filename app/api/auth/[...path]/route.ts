@@ -10,6 +10,7 @@ const BACKEND = process.env.NODE_ENV === "production"
   ? "https://bidmasterv2-production.up.railway.app"
   : "http://localhost:8000";
 
+const IS_PRODUCTION = process.env.NODE_ENV === "production";
 const REFRESH_COOKIE_MAX_AGE = 7 * 86400; // 7 天（与后端 jwt_refresh_token_expire_days 一致）
 
 async function proxyAuthRequest(
@@ -54,7 +55,7 @@ async function proxyAuthRequest(
       if (m) {
         res.cookies.set("refresh_token", m[1], {
           httpOnly: true,
-          secure: true,
+          secure: IS_PRODUCTION,
           sameSite: "lax",
           path: "/",
           maxAge: REFRESH_COOKIE_MAX_AGE,
@@ -67,7 +68,7 @@ async function proxyAuthRequest(
   if (action === "logout") {
     res.cookies.set("refresh_token", "", {
       httpOnly: true,
-      secure: true,
+      secure: IS_PRODUCTION,
       sameSite: "lax",
       path: "/",
       maxAge: 0,

@@ -13,10 +13,12 @@ export function middleware(request: NextRequest) {
     return NextResponse.redirect(new URL('/', request.url));
   }
 
-  // 受保护页面：未登录用户访问 → 重定向到登录页
+  // 受保护页面：未登录用户访问 → 重定向到登录页（带回调 URL）
   const isProtectedRoute = protectedRoutes.some(r => pathname.startsWith(r));
   if (isProtectedRoute && !refreshToken) {
-    return NextResponse.redirect(new URL('/login', request.url));
+    const loginUrl = new URL('/login', request.url);
+    loginUrl.searchParams.set('callbackUrl', pathname);
+    return NextResponse.redirect(loginUrl);
   }
 
   return NextResponse.next();

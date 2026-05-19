@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { useAuthStore } from "@/stores/auth-store";
 
@@ -10,8 +10,11 @@ export default function MainLayout({
   children: React.ReactNode;
 }) {
   const { initAuth } = useAuthStore();
+  const initialized = useRef(false);
 
   useEffect(() => {
+    if (initialized.current) return;
+    initialized.current = true;
     initAuth();
   }, [initAuth]);
 
