@@ -122,7 +122,8 @@ class LiteLLMService:
                 yield response.choices[0].message.content
 
         except Exception as e:
-            yield f"Error: {str(e)}"
+            # 抛出异常而非 yield 文本，让上层 SSE generator 正确处理错误事件
+            raise
 
     async def test_connection(self, provider: str, user_id: str = None) -> dict[str, Any]:
         """

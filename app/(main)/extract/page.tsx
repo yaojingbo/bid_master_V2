@@ -487,7 +487,7 @@ export default function ExtractPage() {
             type="file"
             ref={fileInputRef}
             data-testid="file-input"
-            className="sr-only"
+            className="file-sr-only"
             accept=".pdf,.md,.doc,.docx,.xlsx,.xls"
             onChange={handleUpload}
           />

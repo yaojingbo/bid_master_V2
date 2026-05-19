@@ -28,6 +28,7 @@ import {
 import { cn } from "@/lib/utils";
 import { authFetch } from "@/lib/auth-fetch";
 import { PageHeader } from "@/components/layout/PageHeader";
+import { useSettingsStore } from "@/stores/settings-store";
 import { TaskProgress } from "@/components/ui/TaskProgress";
 import { getModulesFromColumns } from "./column-module-map";
 import { useFileUpload } from "@/hooks/useFileUpload";
@@ -136,6 +137,7 @@ export default function StatisticsPage() {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [activeTab, setActiveTab] = useState("comprehensive");
+  const { activeProvider, activeModel } = useSettingsStore();
   const [uploadedFile, setUploadedFile] = useState<{
     id: string;
     name: string;
@@ -457,7 +459,8 @@ export default function StatisticsPage() {
       const formData = new FormData();
       if (file) formData.append("file", file);
       formData.append("modules", JSON.stringify(selectedModules));
-      formData.append("provider", "deepseek");
+      formData.append("provider", activeProvider);
+      formData.append("model", activeModel);
 
       const res = await authFetch("/api/statistics/analyze/comprehensive/upload", {
         method: "POST",
@@ -551,7 +554,7 @@ export default function StatisticsPage() {
         <input
           type="file"
           ref={fileInputRef}
-          className="sr-only"
+          className="file-sr-only"
           accept=".xlsx,.xls,.csv"
           onChange={handleUpload}
         />

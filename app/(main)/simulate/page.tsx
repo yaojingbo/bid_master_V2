@@ -399,7 +399,7 @@ export default function SimulatePage() {
             <input
               type="file"
               ref={fileInputRef}
-              className="sr-only"
+              className="file-sr-only"
               accept=".pdf,.md,.doc,.docx"
               onChange={handleUpload}
             />

@@ -131,6 +131,7 @@ class OpeningAnalysisRequest(BaseModel):
     fileId: Optional[str] = None
     modules: Optional[list[str]] = None
     provider: Optional[str] = "deepseek"
+    model: Optional[str] = None
 
 
 class StatisticsResponse(BaseModel):

@@ -82,7 +82,7 @@ export function FileUploader({
         type="file"
         ref={fileInputRef}
         data-testid="file-input"
-        className="sr-only"
+        className="file-sr-only"
         accept={accept}
         onChange={handleFileSelect}
       />

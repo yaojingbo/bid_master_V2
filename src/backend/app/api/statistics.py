@@ -603,6 +603,7 @@ async def analyze_opening_upload(
 async def comprehensive_analysis_generator(
     analysis_data: dict,
     provider: str = "deepseek",
+    model: str = None,
     user_id: str = None,
 ):
     """
@@ -648,7 +649,7 @@ async def comprehensive_analysis_generator(
     async def _llm_background_task():
         """后台运行 LLM 调用，将 chunks 推入 Queue。"""
         try:
-            async for chunk in llm_service.llm.complete(provider, messages, stream=True):
+            async for chunk in llm_service.llm.complete(provider, messages, model=model, stream=True, user_id=user_id):
                 result_holder["text"] += chunk
                 await chunk_queue.put({"type": "chunk", "content": chunk})
             result_holder["done"] = True
@@ -758,7 +759,7 @@ async def analyze_comprehensive(request: OpeningAnalysisRequest, current_user: d
         analysis_data = compute_all_dimensions(parsed["bidders"], parsed["meta"], modules)
 
         return EventSourceResponse(
-            comprehensive_analysis_generator(analysis_data, request.provider or "deepseek", user_id=current_user["id"]),
+            comprehensive_analysis_generator(analysis_data, request.provider or "deepseek", model=request.model if hasattr(request, 'model') else None, user_id=current_user["id"]),
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -769,6 +770,7 @@ async def analyze_comprehensive_upload(
     file: UploadFile = File(...),
     modules: Optional[str] = Form(None),
     provider: Optional[str] = Form("deepseek"),
+    model: Optional[str] = Form(None),
     current_user: dict = Depends(get_current_user),
 ):
     """
@@ -782,7 +784,7 @@ async def analyze_comprehensive_upload(
         analysis_data = compute_all_dimensions(parsed["bidders"], parsed["meta"], module_list)
 
         return EventSourceResponse(
-            comprehensive_analysis_generator(analysis_data, provider or "deepseek", user_id=current_user["id"]),
+            comprehensive_analysis_generator(analysis_data, provider or "deepseek", model=model, user_id=current_user["id"]),
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

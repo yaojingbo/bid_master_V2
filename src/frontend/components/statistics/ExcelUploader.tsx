@@ -59,6 +59,7 @@ export function ExcelUploader({
         isDragging && "border-primary bg-primary/5",
         selectedFile && "border-solid border-muted"
       )}
+      onClick={() => fileInputRef.current?.click()}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
@@ -98,7 +99,7 @@ export function ExcelUploader({
           type="file"
           accept={acceptedFormats.join(",")}
           onChange={handleFileChange}
-          className="sr-only"
+          className="file-sr-only"
         />
       </CardContent>
     </Card>
