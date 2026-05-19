@@ -1,21 +1,26 @@
 """
-In-memory mock data storage for development.
-Will be replaced by PostgreSQL when database is configured.
-
-Note: Operations are synchronous and designed to be called from the main
-asyncio event loop. For production with multiple workers, replace with PostgreSQL.
+Persistent mock data storage with JSON file backing.
+Data is kept in memory for fast reads and persisted to disk on writes.
+Survives container restarts and sleep/wake cycles.
 """
+import json
+import os
 import uuid
+import threading
 from datetime import datetime, timezone
 from typing import Optional
 
-# --- Mock Data Store ---
+# --- Config ---
+DATA_DIR = os.environ.get("DATA_DIR", "/tmp/bidmaster_data")
+STORAGE_FILE = os.path.join(DATA_DIR, "mock_storage.json")
 
+# --- In-memory dicts (loaded from disk on startup) ---
 _mock_files: dict = {}
 _mock_simulates: dict = {}
 _mock_openings: dict = {}
 _mock_extracts: dict = {}
 _mock_users: dict = {}
+_mock_api_keys: dict = {}
 
 DEMO_USER_ID = "demo-user"
 
@@ -24,9 +29,50 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+# --- Persistence ---
+_save_lock = threading.Lock()
+
+
+def _load_from_disk():
+    """Load all data from JSON file on startup."""
+    global _mock_files, _mock_simulates, _mock_openings, _mock_extracts, _mock_users, _mock_api_keys
+    if not os.path.exists(STORAGE_FILE):
+        return
+    try:
+        with open(STORAGE_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        _mock_files = data.get("files", {})
+        _mock_simulates = data.get("simulates", {})
+        _mock_openings = data.get("openings", {})
+        _mock_extracts = data.get("extracts", {})
+        _mock_users = data.get("users", {})
+        _mock_api_keys = data.get("api_keys", {})
+    except (json.JSONDecodeError, OSError):
+        pass
+
+
+def _save_to_disk():
+    """Persist all data to JSON file."""
+    os.makedirs(DATA_DIR, exist_ok=True)
+    with _save_lock:
+        try:
+            data = {
+                "files": _mock_files,
+                "simulates": _mock_simulates,
+                "openings": _mock_openings,
+                "extracts": _mock_extracts,
+                "users": _mock_users,
+                "api_keys": _mock_api_keys,
+            }
+            with open(STORAGE_FILE, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+        except OSError:
+            pass
+
+
 def _init_mock_data():
-    """Initialize with sample data for development."""
-    if _mock_files:
+    """Initialize with sample data for development (only if no persisted data)."""
+    if _mock_users:
         return
 
     # Files
@@ -120,7 +166,11 @@ def _init_mock_data():
         "created_at": _now(),
     }
 
+    _save_to_disk()
 
+
+# Load persisted data first, then seed demo data if empty
+_load_from_disk()
 _init_mock_data()
 
 
@@ -165,6 +215,7 @@ def delete_file(file_id: str, user_id: Optional[str] = None) -> bool:
     if user_id and record.get("user_id") != user_id:
         return False
     del _mock_files[file_id]
+    _save_to_disk()
     return True
 
 
@@ -198,6 +249,7 @@ def delete_simulate(task_id: str, user_id: Optional[str] = None) -> bool:
     if user_id and record.get("user_id") != user_id:
         return False
     del _mock_simulates[task_id]
+    _save_to_disk()
     return True
 
 
@@ -229,6 +281,7 @@ def delete_opening(task_id: str, user_id: Optional[str] = None) -> bool:
     if user_id and record.get("user_id") != user_id:
         return False
     del _mock_openings[task_id]
+    _save_to_disk()
     return True
 
 
@@ -260,6 +313,7 @@ def delete_extract(result_id: str, user_id: Optional[str] = None) -> bool:
     if user_id and record.get("user_id") != user_id:
         return False
     del _mock_extracts[result_id]
+    _save_to_disk()
     return True
 
 
@@ -275,6 +329,7 @@ def add_file(record: dict, user_id: Optional[str] = None) -> dict:
     if user_id:
         record["user_id"] = user_id
     _mock_files[record["id"]] = record
+    _save_to_disk()
     return record
 
 
@@ -287,6 +342,7 @@ def add_simulate(record: dict, user_id: Optional[str] = None) -> dict:
     if user_id:
         record["user_id"] = user_id
     _mock_simulates[record["task_id"]] = record
+    _save_to_disk()
     return record
 
 
@@ -299,6 +355,7 @@ def add_opening(record: dict, user_id: Optional[str] = None) -> dict:
     if user_id:
         record["user_id"] = user_id
     _mock_openings[record["id"]] = record
+    _save_to_disk()
     return record
 
 
@@ -311,6 +368,7 @@ def add_extract(record: dict, user_id: Optional[str] = None) -> dict:
     if user_id:
         record["user_id"] = user_id
     _mock_extracts[record["id"]] = record
+    _save_to_disk()
     return record
 
 
@@ -318,6 +376,7 @@ def update_file(file_id: str, updates: dict) -> bool:
     """Update a file record."""
     if file_id in _mock_files:
         _mock_files[file_id].update(updates)
+        _save_to_disk()
         return True
     return False
 
@@ -326,6 +385,7 @@ def update_simulate(task_id: str, updates: dict) -> bool:
     """Update a simulate task record."""
     if task_id in _mock_simulates:
         _mock_simulates[task_id].update(updates)
+        _save_to_disk()
         return True
     return False
 
@@ -340,6 +400,7 @@ def add_user(record: dict) -> dict:
     if "created_at" not in record:
         record["created_at"] = _now()
     _mock_users[record["id"]] = record
+    _save_to_disk()
     return record
 
 
@@ -368,8 +429,6 @@ def get_user_by_id(user_id: str) -> Optional[dict]:
 # API Key Storage
 # ==============================================
 
-_mock_api_keys: dict = {}
-
 
 def save_api_key(user_id: str, provider: str, encrypted_key: str) -> dict:
     """Save or update an encrypted API key for a user/provider pair."""
@@ -381,6 +440,7 @@ def save_api_key(user_id: str, provider: str, encrypted_key: str) -> dict:
         "updated_at": _now(),
     }
     _mock_api_keys[key] = record
+    _save_to_disk()
     return record
 
 
@@ -395,6 +455,7 @@ def delete_api_key(user_id: str, provider: str) -> bool:
     key = f"{user_id}:{provider}"
     if key in _mock_api_keys:
         del _mock_api_keys[key]
+        _save_to_disk()
         return True
     return False
 
