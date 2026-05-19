@@ -33,7 +33,7 @@ interface SettingsState {
 }
 
 const DEFAULT_MODELS: Record<string, string> = {
-  deepseek: "deepseek-v4-flash",
+  deepseek: "deepseek-chat",
   dashscope: "qwen-turbo",
   zhipu: "glm-4-flash",
   minimax: "MiniMax-M2.7",

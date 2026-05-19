@@ -15,7 +15,7 @@ class LiteLLMService:
     # Model mappings - must use litellm provider prefix format
     MODEL_MAP = {
         "openai": "openai/gpt-4o",
-        "deepseek": "deepseek/deepseek-v4-pro",
+        "deepseek": "deepseek/deepseek-chat",
         "claude": "anthropic/claude-sonnet-4-20250514",
         "dashscope": "openai/qwen-turbo",
         "zhipu": "openai/glm-4-flash",
@@ -180,7 +180,7 @@ class LiteLLMService:
             {
                 "id": "deepseek",
                 "name": "DeepSeek",
-                "models": ["deepseek-v4-pro", "deepseek-v4-flash"],
+                "models": ["deepseek-chat", "deepseek-reasoner"],
             },
             {
                 "id": "dashscope",
