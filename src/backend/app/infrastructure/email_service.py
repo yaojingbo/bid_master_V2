@@ -1,20 +1,20 @@
 """
-邮件发送服务（Brevo HTTP API）。
+邮件发送服务（SMTP）。
 """
 import logging
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 
-import httpx
+import aiosmtplib
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
-
-BREVO_API = "https://api.brevo.com/v3/smtp/email"
 
 
 async def send_verification_code(email: str, code: str) -> tuple[bool, str]:
     settings = get_settings()
     subject = "Bid Master - 邮箱验证码"
-    text = f"""您好，
+    body = f"""您好，
 
 您的邮箱验证码为：
 
@@ -26,14 +26,14 @@ async def send_verification_code(email: str, code: str) -> tuple[bool, str]:
 
 —— Bid Master 团队"""
 
-    return await _send_email(email, subject, text, settings)
+    return await _send_email(email, subject, body, settings)
 
 
 async def send_reset_link(email: str, token: str) -> tuple[bool, str]:
     settings = get_settings()
     link = f"{settings.frontend_url}/reset-password?token={token}"
     subject = "Bid Master - 重置密码"
-    text = f"""您好，
+    body = f"""您好，
 
 您请求了密码重置，请点击以下链接设置新密码：
 
@@ -43,40 +43,34 @@ async def send_reset_link(email: str, token: str) -> tuple[bool, str]:
 
 —— Bid Master 团队"""
 
-    return await _send_email(email, subject, text, settings)
+    return await _send_email(email, subject, body, settings)
 
 
-async def _send_email(to: str, subject: str, text: str, settings) -> tuple[bool, str]:
-    if not settings.brevo_api_key:
-        logger.warning(f"Brevo API Key 未配置，邮件未发送。收件人: {to}, 主题: {subject}")
-        logger.info(f"邮件内容:\n{text}")
+async def _send_email(to: str, subject: str, body: str, settings) -> tuple[bool, str]:
+    if not settings.smtp_host:
+        logger.warning(f"SMTP 未配置，邮件未发送。收件人: {to}, 主题: {subject}")
+        logger.info(f"邮件内容:\n{body}")
         return True, ""
 
+    msg = MIMEMultipart()
+    msg["From"] = settings.smtp_from or settings.smtp_user
+    msg["To"] = to
+    msg["Subject"] = subject
+    msg.attach(MIMEText(body, "plain", "utf-8"))
+
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.post(
-                BREVO_API,
-                headers={
-                    "api-key": settings.brevo_api_key,
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "sender": {
-                        "name": "Bid Master",
-                        "email": settings.brevo_from,
-                    },
-                    "to": [{"email": to}],
-                    "subject": subject,
-                    "textContent": text,
-                },
-            )
-            if resp.status_code in (200, 201):
-                logger.info(f"邮件已发送: to={to}, subject={subject}")
-                return True, ""
-            else:
-                error_msg = f"Brevo 返回错误: {resp.status_code} {resp.text}"
-                logger.error(error_msg)
-                return False, error_msg
+        await aiosmtplib.send(
+            msg,
+            hostname=settings.smtp_host,
+            port=settings.smtp_port,
+            username=settings.smtp_user,
+            password=settings.smtp_password,
+            use_tls=settings.smtp_port == 465,
+            start_tls=settings.smtp_port == 587,
+            timeout=10,
+        )
+        logger.info(f"邮件已发送: to={to}, subject={subject}")
+        return True, ""
     except Exception as e:
         error_msg = f"邮件发送异常: {e}"
         logger.error(error_msg)

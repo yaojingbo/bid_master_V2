@@ -58,9 +58,12 @@ class Settings(BaseSettings):
         "text/csv",
     ]
 
-    # Email (Brevo)
-    brevo_api_key: str = ""
-    brevo_from: str = ""
+    # SMTP Email (Gmail)
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_from: str = ""
     frontend_url: str = "http://localhost:3000"
 
 @lru_cache()
