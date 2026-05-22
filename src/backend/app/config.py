@@ -58,12 +58,9 @@ class Settings(BaseSettings):
         "text/csv",
     ]
 
-    # SMTP Email (Gmail)
-    smtp_host: str = ""
-    smtp_port: int = 587
-    smtp_user: str = ""
-    smtp_password: str = ""
-    smtp_from: str = ""
+    # Email (Resend)
+    resend_api_key: str = ""
+    resend_from: str = "Bid Master <onboarding@resend.dev>"
     frontend_url: str = "http://localhost:3000"
 
 @lru_cache()
