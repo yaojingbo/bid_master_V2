@@ -1,6 +1,6 @@
-"use client";
+'use client';
 
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback } from 'react';
 import {
   Upload,
   FileSearch,
@@ -13,61 +13,62 @@ import {
   Clock,
   FileText,
   Sparkles,
-} from "lucide-react";
-import { cn } from "@/lib/utils";
-import { authFetch } from "@/lib/auth-fetch";
-import { PageHeader } from "@/components/layout/PageHeader";
-import { TabNavigation } from "@/components/ui/TabNavigation";
-import { TaskProgress } from "@/components/ui/TaskProgress";
-import { useFileUpload } from "@/hooks/useFileUpload";
-import { useFileStore } from "@/stores/file-store";
-import { useSettingsStore } from "@/stores/settings-store";
-import { useTaskStore } from "@/stores/task-store";
-import { mockFiles } from "@/data/mock/providers";
+} from 'lucide-react';
+import { cn } from '@/lib/utils';
+import { authFetch, authFetchSSE } from '@/lib/auth-fetch';
+import { PageHeader } from '@/components/layout/PageHeader';
+import { TabNavigation } from '@/components/ui/TabNavigation';
+import { TaskProgress } from '@/components/ui/TaskProgress';
+import { useFileUpload } from '@/hooks/useFileUpload';
+import { useFileStore } from '@/stores/file-store';
+import { useSettingsStore } from '@/stores/settings-store';
+import { useTaskStore } from '@/stores/task-store';
+import { mockFiles } from '@/data/mock/providers';
+import { listFiles } from '@/lib/data-api';
 
 // 提取阶段定义
 const extractPhases = [
-  { key: "reading", label: "读取文档", icon: FileText },
-  { key: "parsing", label: "解析内容", icon: FileSearch },
-  { key: "analyzing", label: "AI 分析", icon: Sparkles },
-  { key: "extracting", label: "提取要素", icon: CheckCircle2 },
+  { key: 'reading', label: '读取文档', icon: FileText },
+  { key: 'parsing', label: '解析内容', icon: FileSearch },
+  { key: 'analyzing', label: 'AI 分析', icon: Sparkles },
+  { key: 'extracting', label: '提取要素', icon: CheckCircle2 },
 ];
 
 // 要素类别
 const elementCategories = [
   {
-    group: "基本信息",
-    items: [{ id: "basic_info", label: "项目基本信息" }],
+    group: '基本信息',
+    items: [{ id: 'basic_info', label: '项目基本信息' }],
   },
   {
-    group: "门槛要求",
+    group: '门槛要求',
     items: [
-      { id: "qualification", label: "资质要求" },
-      { id: "experience", label: "业绩要求" },
-      { id: "personnel", label: "人员要求" },
+      { id: 'qualification', label: '资质要求' },
+      { id: 'experience', label: '业绩要求' },
+      { id: 'personnel', label: '人员要求' },
     ],
   },
   {
-    group: "评标办法",
+    group: '评标办法',
     items: [
-      { id: "evaluation_method", label: "评标办法" },
-      { id: "scoring_details", label: "分值分配与评分细则" },
+      { id: 'evaluation_method', label: '评标办法' },
+      { id: 'scoring_details', label: '分值分配与评分细则' },
     ],
   },
   {
-    group: "商务条款",
+    group: '商务条款',
     items: [
-      { id: "selection_method", label: "定标方法" },
-      { id: "contract_terms", label: "合同条款" },
+      { id: 'selection_method', label: '定标方法' },
+      { id: 'contract_terms', label: '合同条款' },
     ],
   },
 ];
 
-const allElementIds = elementCategories.flatMap((g) => g.items.map((i) => i.id));
+const allElementIds = elementCategories.flatMap(g => g.items.map(i => i.id));
 
 const outputTemplates = [
-  { value: "standard", label: "标准五要素" },
-  { value: "brief", label: "简版速查" },
+  { value: 'standard', label: '标准要素' },
+  { value: 'brief', label: '简版速查' },
 ];
 
 interface ExtractedElement {
@@ -76,20 +77,20 @@ interface ExtractedElement {
 }
 
 export default function ExtractPage() {
-  const [activeTab, setActiveTab] = useState("single");
+  const [activeTab, setActiveTab] = useState('single');
   const [selectedFileId, setSelectedFileId] = useState<string | null>(null);
   const [selectedFileIds, setSelectedFileIds] = useState<string[]>([]);
-  const [selectedTemplate, setSelectedTemplate] = useState("standard");
+  const [selectedTemplate, setSelectedTemplate] = useState('standard');
   const [selectedElements, setSelectedElements] = useState<string[]>(allElementIds);
   const [selectAll, setSelectAll] = useState(true);
-  const [thresholdText, setThresholdText] = useState("");
+  const [thresholdText, setThresholdText] = useState('');
 
   // SSE 进度状态
   const [isStreaming, setIsStreaming] = useState(false);
   const [currentPhase, setCurrentPhase] = useState<string | null>(null);
-  const [progressMessage, setProgressMessage] = useState("");
+  const [progressMessage, setProgressMessage] = useState('');
   const [extractedElements, setExtractedElements] = useState<ExtractedElement[]>([]);
-  const [streamRawText, setStreamRawText] = useState("");
+  const [streamRawText, setStreamRawText] = useState('');
   const [isDone, setIsDone] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [percentage, setPercentage] = useState<number | null>(null);
@@ -121,7 +122,17 @@ export default function ExtractPage() {
     return () => {
       if (syncTimerRef.current) clearTimeout(syncTimerRef.current);
     };
-  }, [isStreaming, currentPhase, progressMessage, extractedElements, streamRawText, isDone, errorMessage, selectedFileId, activeTab]);
+  }, [
+    isStreaming,
+    currentPhase,
+    progressMessage,
+    extractedElements,
+    streamRawText,
+    isDone,
+    errorMessage,
+    selectedFileId,
+    activeTab,
+  ]);
 
   // 页面挂载时：检查 taskStore 中是否有未完成的任务，恢复 UI 状态
   useEffect(() => {
@@ -153,32 +164,35 @@ export default function ExtractPage() {
           });
           const data = await res.json();
           if (data.success && data.data) {
-            const content = data.data.content || "";
+            const content = data.data.content || '';
             try {
               const parsed = JSON.parse(content);
               const elements = parsed.elements || [];
               if (elements.length > 0) {
                 setExtractedElements(
                   elements.map((e: { name?: string; content?: string }) => ({
-                    name: e.name || "未知要素",
-                    content: e.content || "",
+                    name: e.name || '未知要素',
+                    content: e.content || '',
                   }))
                 );
               }
             } catch {
-              setStreamRawText((prev) => prev || content);
+              setStreamRawText(prev => prev || content);
             }
-            const isBackground = data.data.status === "completed_background" || data.data.status === "completed_disconnected" || data.data.status === "partial";
-            setProgressMessage(isBackground ? "AI 分析在后台已完成" : "提取完成");
+            const isBackground =
+              data.data.status === 'completed_background' ||
+              data.data.status === 'completed_disconnected' ||
+              data.data.status === 'partial';
+            setProgressMessage(isBackground ? 'AI 分析在后台已完成' : '提取完成');
             setIsDone(true);
             setIsStreaming(false);
-            setCurrentPhase("extracting");
+            setCurrentPhase('extracting');
             useTaskStore.getState().updateExtract({
               isStreaming: false,
-              currentPhase: "extracting",
-              progressMessage: isBackground ? "AI 分析在后台已完成" : "提取完成",
+              currentPhase: 'extracting',
+              progressMessage: isBackground ? 'AI 分析在后台已完成' : '提取完成',
               extractedElements: useTaskStore.getState().extract?.extractedElements || [],
-              streamRawText: useTaskStore.getState().extract?.streamRawText || "",
+              streamRawText: useTaskStore.getState().extract?.streamRawText || '',
               isDone: true,
               errorMessage: null,
               selectedFileId: saved.selectedFileId,
@@ -203,10 +217,32 @@ export default function ExtractPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const { upload } = useFileUpload({
-    onSuccess: (fileId) => setSelectedFileId(fileId),
+    onSuccess: fileId => setSelectedFileId(fileId),
   });
-  const { files } = useFileStore();
+  const { files, addFile } = useFileStore();
   const { activeProvider, activeModel } = useSettingsStore();
+
+  // 从后端加载真实文件列表
+  useEffect(() => {
+    listFiles({ page: 1, page_size: 50 })
+      .then(res => {
+        // 将后端文件同步到 fileStore（用于 extract 页面选择文件）
+        for (const f of res.files) {
+          addFile({
+            id: f.id,
+            name: f.original_name,
+            size: f.size,
+            mimeType: f.type,
+            category: 'tender',
+            status: 'ready',
+            createdAt: f.created_at || new Date().toISOString(),
+          });
+        }
+      })
+      .catch(() => {
+        /* 静默失败，显示空列表 */
+      });
+  }, [addFile]);
 
   const displayFiles = files.length > 0 ? files : mockFiles;
 
@@ -238,26 +274,26 @@ export default function ExtractPage() {
   };
 
   const handleSelectElement = (id: string) => {
-    setSelectedElements((prev) => {
-      const next = prev.includes(id) ? prev.filter((e) => e !== id) : [...prev, id];
+    setSelectedElements(prev => {
+      const next = prev.includes(id) ? prev.filter(e => e !== id) : [...prev, id];
       setSelectAll(next.length === allElementIds.length);
       return next;
     });
   };
 
   const toggleFileSelection = (id: string) => {
-    setSelectedFileIds((prev) =>
-      prev.includes(id) ? prev.filter((fid) => fid !== id) : [...prev, id]
+    setSelectedFileIds(prev =>
+      prev.includes(id) ? prev.filter(fid => fid !== id) : [...prev, id]
     );
   };
 
-  const readyFiles = displayFiles.filter((f) => f.status === "ready");
+  const readyFiles = displayFiles.filter(f => f.status === 'ready');
 
   const resetExtractionState = () => {
     setCurrentPhase(null);
-    setProgressMessage("");
+    setProgressMessage('');
     setExtractedElements([]);
-    setStreamRawText("");
+    setStreamRawText('');
     setIsDone(false);
     setErrorMessage(null);
     setPercentage(null);
@@ -268,19 +304,24 @@ export default function ExtractPage() {
     if (!selectedFileId) return;
     resetExtractionState();
     setIsStreaming(true);
-    setCurrentPhase("reading");
-    setProgressMessage("正在连接服务...");
+    setCurrentPhase('reading');
+    setProgressMessage('正在连接服务...');
     abortRef.current = new AbortController();
 
     try {
-      const response = await authFetch("/api/extract/element", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
+      const response = await authFetchSSE('/api/extract/element', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           fileId: selectedFileId,
           provider: activeProvider,
           model: activeModel,
-          template_type: activeTab === "batch" ? "batch" : activeTab === "threshold" ? "threshold" : selectedTemplate,
+          template_type:
+            activeTab === 'batch'
+              ? 'batch'
+              : activeTab === 'threshold'
+                ? 'threshold'
+                : selectedTemplate,
           elements: selectedElements,
           mode: activeTab,
         }),
@@ -296,10 +337,10 @@ export default function ExtractPage() {
       await readSSEStream(response);
       setIsStreaming(false);
     } catch (err) {
-      if (err instanceof DOMException && err.name === "AbortError") {
-        setProgressMessage("已手动停止");
+      if (err instanceof DOMException && err.name === 'AbortError') {
+        setProgressMessage('已手动停止');
       } else {
-        setErrorMessage(err instanceof Error ? err.message : "未知错误");
+        setErrorMessage(err instanceof Error ? err.message : '未知错误');
       }
       setIsStreaming(false);
     }
@@ -310,69 +351,74 @@ export default function ExtractPage() {
     if (event.phase) setCurrentPhase(event.phase as string);
     if (event.percentage != null) setPercentage(event.percentage as number);
 
-    if (event.type === "progress") {
-      if (!event.phase) setCurrentPhase("parsing");
-      setProgressMessage(event.message as string || "");
-    } else if (event.type === "llm_progress") {
-      if (!event.phase) setCurrentPhase("analyzing");
-      setProgressMessage(event.message as string || "AI 正在分析...");
-    } else if (event.type === "element") {
-      if (!event.phase) setCurrentPhase("extracting");
+    if (event.type === 'progress') {
+      if (!event.phase) setCurrentPhase('parsing');
+      setProgressMessage((event.message as string) || '');
+    } else if (event.type === 'llm_progress') {
+      if (!event.phase) setCurrentPhase('analyzing');
+      setProgressMessage((event.message as string) || 'AI 正在分析...');
+    } else if (event.type === 'element') {
+      if (!event.phase) setCurrentPhase('extracting');
       const elem = (event.data || event) as Record<string, unknown>;
-      setExtractedElements((prev) => [
+      setExtractedElements(prev => [
         ...prev,
-        { name: (elem.name as string) || "未知要素", content: (elem.content as string) || "" },
+        { name: (elem.name as string) || '未知要素', content: (elem.content as string) || '' },
       ]);
-      setStreamRawText((prev) => prev + `## ${elem.name}\n${elem.content}\n\n`);
-    } else if (event.type === "done") {
-      if (!event.phase) setCurrentPhase("extracting");
+      setStreamRawText(prev => prev + `## ${elem.name}\n${elem.content}\n\n`);
+    } else if (event.type === 'done') {
+      if (!event.phase) setCurrentPhase('extracting');
       setIsDone(true);
       setPercentage(100);
-      setProgressMessage((event.data as Record<string, unknown>)?.summary as string || "提取完成");
-    } else if (event.type === "error") {
-      setErrorMessage((event.data as Record<string, unknown>)?.message as string || "提取失败");
+      setProgressMessage(
+        ((event.data as Record<string, unknown>)?.summary as string) || '提取完成'
+      );
+    } else if (event.type === 'error') {
+      setErrorMessage(((event.data as Record<string, unknown>)?.message as string) || '提取失败');
     }
   }, []);
 
   // 通用 SSE 流读取
-  const readSSEStream = useCallback(async (response: Response) => {
-    if (!response.body) return;
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
+  const readSSEStream = useCallback(
+    async (response: Response) => {
+      if (!response.body) return;
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
 
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() || "";
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
 
-      for (const line of lines) {
-        if (!line.startsWith("data: ")) continue;
-        try {
-          const event = JSON.parse(line.slice(6));
-          processSSEEvent(event);
-        } catch {
-          // 跳过无法解析的行
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          try {
+            const event = JSON.parse(line.slice(6));
+            processSSEEvent(event);
+          } catch {
+            // 跳过无法解析的行
+          }
         }
       }
-    }
-  }, [processSSEEvent]);
+    },
+    [processSSEEvent]
+  );
 
   const handleBatchExtract = async () => {
     if (selectedFileIds.length < 2) return;
     resetExtractionState();
     setIsStreaming(true);
-    setCurrentPhase("reading");
+    setCurrentPhase('reading');
     setProgressMessage(`正在连接服务（${selectedFileIds.length} 个文件）...`);
     abortRef.current = new AbortController();
 
     try {
-      const response = await authFetch("/api/extract/element/batch", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
+      const response = await authFetchSSE('/api/extract/element/batch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           fileIds: selectedFileIds,
           provider: activeProvider,
@@ -391,10 +437,10 @@ export default function ExtractPage() {
       await readSSEStream(response);
       setIsStreaming(false);
     } catch (err) {
-      if (err instanceof DOMException && err.name === "AbortError") {
-        setProgressMessage("已手动停止");
+      if (err instanceof DOMException && err.name === 'AbortError') {
+        setProgressMessage('已手动停止');
       } else {
-        setErrorMessage(err instanceof Error ? err.message : "未知错误");
+        setErrorMessage(err instanceof Error ? err.message : '未知错误');
       }
       setIsStreaming(false);
     }
@@ -404,14 +450,14 @@ export default function ExtractPage() {
     if (!selectedFileId || !thresholdText.trim()) return;
     resetExtractionState();
     setIsStreaming(true);
-    setCurrentPhase("reading");
-    setProgressMessage("正在连接服务...");
+    setCurrentPhase('reading');
+    setProgressMessage('正在连接服务...');
     abortRef.current = new AbortController();
 
     try {
-      const response = await authFetch("/api/extract/element/threshold", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
+      const response = await authFetchSSE('/api/extract/element/threshold', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           fileId: selectedFileId,
           userQualifications: thresholdText,
@@ -430,10 +476,10 @@ export default function ExtractPage() {
       await readSSEStream(response);
       setIsStreaming(false);
     } catch (err) {
-      if (err instanceof DOMException && err.name === "AbortError") {
-        setProgressMessage("已手动停止");
+      if (err instanceof DOMException && err.name === 'AbortError') {
+        setProgressMessage('已手动停止');
       } else {
-        setErrorMessage(err instanceof Error ? err.message : "未知错误");
+        setErrorMessage(err instanceof Error ? err.message : '未知错误');
       }
       setIsStreaming(false);
     }
@@ -443,17 +489,20 @@ export default function ExtractPage() {
     abortRef.current?.abort();
     abortRef.current = null;
     setIsStreaming(false);
-    setProgressMessage("已手动停止");
+    setProgressMessage('已手动停止');
   }, []);
 
-  const handleCopy = useCallback(() => navigator.clipboard.writeText(streamRawText), [streamRawText]);
+  const handleCopy = useCallback(
+    () => navigator.clipboard.writeText(streamRawText),
+    [streamRawText]
+  );
 
   const handleDownload = useCallback(() => {
-    const blob = new Blob([streamRawText], { type: "text/markdown;charset=utf-8" });
+    const blob = new Blob([streamRawText], { type: 'text/markdown;charset=utf-8' });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
+    const a = document.createElement('a');
     a.href = url;
-    a.download = "extract_result.md";
+    a.download = 'extract_result.md';
     document.body.appendChild(a);
     a.click();
     URL.revokeObjectURL(url);
@@ -461,49 +510,49 @@ export default function ExtractPage() {
   }, [streamRawText]);
 
   const tabs = [
-    { key: "single", label: "单文件提取", icon: FileSearch },
-    { key: "batch", label: "批量对比", icon: BarChart3 },
-    { key: "threshold", label: "门槛分析", icon: Shield },
+    { key: 'single', label: '单文件提取', icon: FileSearch },
+    { key: 'batch', label: '批量对比', icon: BarChart3 },
+    { key: 'threshold', label: '门槛分析', icon: Shield },
   ];
 
   return (
     <div className="max-w-4xl mx-auto space-y-6">
-      <PageHeader title="要素提取" description="上传招标文件，AI 自动提取八大关键要素" />
+      <PageHeader title="要素提取" description="上传招标文件，AI 按用户要求自动提取关键要素" />
 
       {/* Tab 导航 */}
       <TabNavigation tabs={tabs} activeTab={activeTab} onTabChange={setActiveTab} />
 
       {/* 上传区域 */}
       <label
-          className={cn(
-            "border-2 border-dashed rounded-xl p-10 text-center transition-colors cursor-pointer flex flex-col items-center gap-4",
-            isDragging ? "border-primary bg-primary/5" : "hover:border-primary/50"
-          )}
-          onDragOver={handleDragOver}
-          onDragLeave={handleDragLeave}
-          onDrop={handleDrop}
-        >
-          <input
-            type="file"
-            ref={fileInputRef}
-            data-testid="file-input"
-            className="file-sr-only"
-            accept=".pdf,.md,.doc,.docx,.xlsx,.xls"
-            onChange={handleUpload}
-          />
-          <div className="h-12 w-12 rounded-full bg-primary/10 p-3">
-            <Upload className="h-6 w-6 text-primary" />
-          </div>
-          <div>
-            <p className="text-lg font-medium">点击或拖拽文件到此区域</p>
-            <p className="text-sm text-muted-foreground">
-              支持 PDF、Markdown、Word、Excel（最大 50MB）
-            </p>
-          </div>
-        </label>
+        className={cn(
+          'border-2 border-dashed rounded-xl p-10 text-center transition-colors cursor-pointer flex flex-col items-center gap-4',
+          isDragging ? 'border-primary bg-primary/5' : 'hover:border-primary/50'
+        )}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+      >
+        <input
+          type="file"
+          ref={fileInputRef}
+          data-testid="file-input"
+          className="file-sr-only"
+          accept=".pdf,.md,.doc,.docx,.xlsx,.xls"
+          onChange={handleUpload}
+        />
+        <div className="h-12 w-12 rounded-full bg-primary/10 p-3">
+          <Upload className="h-6 w-6 text-primary" />
+        </div>
+        <div>
+          <p className="text-lg font-medium">点击或拖拽文件到此区域</p>
+          <p className="text-sm text-muted-foreground">
+            支持 PDF、Markdown、Word、Excel（最大 50MB）
+          </p>
+        </div>
+      </label>
 
       {/* 文件列表 + 选项区 分栏布局（单文件提取模式） */}
-      {activeTab === "single" && displayFiles.length > 0 && (
+      {activeTab === 'single' && displayFiles.length > 0 && (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           {/* 左：文件列表 */}
           <div className="md:col-span-1">
@@ -512,14 +561,14 @@ export default function ExtractPage() {
                 <h2 className="font-semibold text-sm">已上传文件</h2>
               </div>
               <div className="divide-y">
-                {displayFiles.map((file) => (
+                {displayFiles.map(file => (
                   <div
                     key={file.id}
                     data-testid="file-item"
                     data-file-status={file.status}
                     className={cn(
-                      "p-3 flex items-center justify-between cursor-pointer hover:bg-muted/30 transition-colors",
-                      selectedFileId === file.id && "bg-primary/5"
+                      'p-3 flex items-center justify-between cursor-pointer hover:bg-muted/30 transition-colors',
+                      selectedFileId === file.id && 'bg-primary/5'
                     )}
                     onClick={() => setSelectedFileId(file.id)}
                   >
@@ -529,13 +578,13 @@ export default function ExtractPage() {
                     </div>
                     <span
                       className={cn(
-                        "px-2 py-1 rounded text-xs shrink-0",
-                        file.status === "ready"
-                          ? "bg-success/10 text-success"
-                          : "bg-warning/10 text-warning"
+                        'px-2 py-1 rounded text-xs shrink-0',
+                        file.status === 'ready'
+                          ? 'bg-success/10 text-success'
+                          : 'bg-warning/10 text-warning'
                       )}
                     >
-                      {file.status === "ready" ? "就绪" : "处理中"}
+                      {file.status === 'ready' ? '就绪' : '处理中'}
                     </span>
                   </div>
                 ))}
@@ -551,10 +600,12 @@ export default function ExtractPage() {
                 <select
                   className="border rounded px-3 py-2 w-full"
                   value={selectedTemplate}
-                  onChange={(e) => setSelectedTemplate(e.target.value)}
+                  onChange={e => setSelectedTemplate(e.target.value)}
                 >
-                  {outputTemplates.map((t) => (
-                    <option key={t.value} value={t.value}>{t.label}</option>
+                  {outputTemplates.map(t => (
+                    <option key={t.value} value={t.value}>
+                      {t.label}
+                    </option>
                   ))}
                 </select>
               </div>
@@ -564,17 +615,17 @@ export default function ExtractPage() {
                   <input
                     type="checkbox"
                     checked={selectAll}
-                    onChange={(e) => handleSelectAll(e.target.checked)}
+                    onChange={e => handleSelectAll(e.target.checked)}
                     className="w-4 h-4"
                   />
                   <span className="font-medium">提取全部要素</span>
                 </div>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                  {elementCategories.map((cat) => (
+                  {elementCategories.map(cat => (
                     <div key={cat.group}>
                       <p className="text-sm text-muted-foreground mb-2">{cat.group}</p>
                       <div className="space-y-2">
-                        {cat.items.map((item) => (
+                        {cat.items.map(item => (
                           <label key={item.id} className="flex items-center gap-2 text-sm">
                             <input
                               type="checkbox"
@@ -625,7 +676,7 @@ export default function ExtractPage() {
       )}
 
       {/* 批量对比 Tab */}
-      {activeTab === "batch" && (
+      {activeTab === 'batch' && (
         <div className="space-y-4">
           <div className="rounded-xl border border-border">
             <div className="p-4 border-b bg-muted/50">
@@ -637,12 +688,12 @@ export default function ExtractPage() {
                   还没有已上传的文件，请先在顶部上传
                 </div>
               ) : (
-                readyFiles.map((file) => (
+                readyFiles.map(file => (
                   <div
                     key={file.id}
                     className={cn(
-                      "p-4 flex items-center justify-between cursor-pointer hover:bg-muted/30 transition-colors",
-                      selectedFileIds.includes(file.id) && "bg-primary/5"
+                      'p-4 flex items-center justify-between cursor-pointer hover:bg-muted/30 transition-colors',
+                      selectedFileIds.includes(file.id) && 'bg-primary/5'
                     )}
                     onClick={() => toggleFileSelection(file.id)}
                   >
@@ -652,7 +703,7 @@ export default function ExtractPage() {
                         checked={selectedFileIds.includes(file.id)}
                         onChange={() => toggleFileSelection(file.id)}
                         className="w-4 h-4"
-                        onClick={(e) => e.stopPropagation()}
+                        onClick={e => e.stopPropagation()}
                       />
                       <FileSearch className="h-5 w-5 text-muted-foreground" />
                       <div>
@@ -662,7 +713,9 @@ export default function ExtractPage() {
                         </p>
                       </div>
                     </div>
-                    <span className="px-2 py-1 rounded text-xs bg-success/10 text-success">就绪</span>
+                    <span className="px-2 py-1 rounded text-xs bg-success/10 text-success">
+                      就绪
+                    </span>
                   </div>
                 ))
               )}
@@ -674,17 +727,17 @@ export default function ExtractPage() {
               <input
                 type="checkbox"
                 checked={selectAll}
-                onChange={(e) => handleSelectAll(e.target.checked)}
+                onChange={e => handleSelectAll(e.target.checked)}
                 className="w-4 h-4"
               />
               <span className="font-medium">对比全部要素</span>
             </div>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              {elementCategories.map((cat) => (
+              {elementCategories.map(cat => (
                 <div key={cat.group}>
                   <p className="text-sm text-muted-foreground mb-2">{cat.group}</p>
                   <div className="space-y-2">
-                    {cat.items.map((item) => (
+                    {cat.items.map(item => (
                       <label key={item.id} className="flex items-center gap-2 text-sm">
                         <input
                           type="checkbox"
@@ -732,18 +785,16 @@ export default function ExtractPage() {
       )}
 
       {/* 门槛分析 Tab */}
-      {activeTab === "threshold" && selectedFileId && (
+      {activeTab === 'threshold' && selectedFileId && (
         <div className="space-y-4">
           <div className="rounded-xl border border-border p-6">
-            <label className="text-sm text-muted-foreground mb-2 block">
-              填写自身资质条件
-            </label>
+            <label className="text-sm text-muted-foreground mb-2 block">填写自身资质条件</label>
             <textarea
               data-testid="threshold-textarea"
               className="w-full border rounded p-3 text-sm min-h-[120px]"
               placeholder="请输入您的资质、业绩、人员信息，系统将对比招标文件要求进行匹配分析..."
               value={thresholdText}
-              onChange={(e) => setThresholdText(e.target.value)}
+              onChange={e => setThresholdText(e.target.value)}
             />
           </div>
           <button
@@ -777,7 +828,7 @@ export default function ExtractPage() {
       )}
 
       {/* 门槛分析无需文件选中提示 */}
-      {activeTab === "threshold" && !selectedFileId && (
+      {activeTab === 'threshold' && !selectedFileId && (
         <div className="rounded-xl border border-border p-8 text-center text-muted-foreground text-sm">
           请先在顶部上传并选择一个招标文件
         </div>
@@ -802,9 +853,7 @@ export default function ExtractPage() {
       {extractedElements.length > 0 && (
         <div className="space-y-4">
           <div className="flex items-center justify-between">
-            <h2 className="text-xl font-semibold">
-              提取结果（{extractedElements.length} 个要素）
-            </h2>
+            <h2 className="text-xl font-semibold">提取结果（{extractedElements.length} 个要素）</h2>
             <div className="flex items-center gap-2">
               <button
                 onClick={handleCopy}
@@ -828,7 +877,11 @@ export default function ExtractPage() {
           {/* 结构化卡片 */}
           <div className="grid gap-4">
             {extractedElements.map((elem, idx) => (
-              <div key={idx} data-testid="element-card" className="border border-rounded-xl border border-border overflow-hidden bg-card">
+              <div
+                key={idx}
+                data-testid="element-card"
+                className="border border-rounded-xl border border-border overflow-hidden bg-card"
+              >
                 <div className="px-4 py-3 bg-muted border-b border-border flex items-center gap-2">
                   <span className="font-medium text-sm text-foreground">{elem.name}</span>
                 </div>

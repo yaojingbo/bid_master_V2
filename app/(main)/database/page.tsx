@@ -10,7 +10,9 @@ import {
   Download,
   Trash2,
   X,
+  Archive,
 } from "lucide-react";
+import JSZip from "jszip";
 import { cn } from "@/lib/utils";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { TabNavigation } from "@/components/ui/TabNavigation";
@@ -27,6 +29,7 @@ import {
   deleteOpening as apiDeleteOpening,
   listExtracts,
   deleteExtract as apiDeleteExtract,
+  batchDownloadFiles,
 } from "@/lib/data-api";
 import type {
   DataStats,
@@ -66,6 +69,74 @@ const fileTypeColor: Record<string, string> = {
   markdown: "bg-primary/10 text-primary",
   word: "bg-secondary/10 text-secondary",
 };
+
+// --- Markdown 内容生成器（复用详情弹窗逻辑）---
+
+function generateSimulateMarkdown(task: SimulateTaskRecord): string {
+  const lines = Object.entries(task.step_results || {}).map(([key, val]) => {
+    const label =
+      key === "step1" ? "Step 1: PDF转换"
+      : key === "step2" ? "Step 2: 要素提取"
+      : key === "step3" ? "Step 3: 对比分析"
+      : "Step 4: 模拟编制";
+    const content = typeof val === "string" ? val : JSON.stringify(val, null, 2);
+    return `## ${label}\n\n${content}`;
+  });
+  return `# 模拟任务 ${task.task_id}\n\n${lines.join("\n\n")}`;
+}
+
+function generateOpeningMarkdown(result: OpeningResultRecord): string {
+  const meta = result.meta || {};
+  const stats = result.bid_stats || ({} as any);
+  const lines = [
+    `# 开标分析报告`,
+    ``,
+    `- 项目名称: ${(meta as any).project_name || result.id}`,
+    `- 项目编号: ${(meta as any).bid_number || "-"}`,
+    `- 投标人数量: ${result.bidder_count || "?"}`,
+    `- 分析时间: ${result.created_at || "-"}`,
+  ];
+  if ((meta as any).max_price) lines.push(`- 最高限价: ¥${(meta as any).max_price.toLocaleString()}`);
+  if ((meta as any).benchmark_price) lines.push(`- 评标基准价: ¥${(meta as any).benchmark_price.toLocaleString()}`);
+
+  if (result.bid_ranking?.length) {
+    lines.push(``, `## 投标价排名`, ``);
+    lines.push(`| 排名 | 投标人 | 报价(万元) |`, "|------|--------|----------|");
+    for (const r of result.bid_ranking) {
+      lines.push(`| ${r.rank} | ${r.name} | ¥${r.price.toLocaleString()} |`);
+    }
+  }
+
+  if (stats.mean !== undefined) {
+    lines.push(``, `## 统计指标`, ``);
+    lines.push(`| 指标 | 值 |`, "|------|-----|");
+    lines.push(`| 均值 | ¥${stats.mean.toLocaleString()} |`);
+    const sd = stats.std_dev ?? stats.std;
+    if (sd !== undefined) lines.push(`| 标准差 | ${sd} |`);
+    if (stats.cv !== undefined) lines.push(`| 离散系数 | ${stats.cv}% (${stats.cv_level || "-"}) |`);
+    lines.push(`| 最小值 | ¥${stats.min?.toLocaleString()} |`);
+    lines.push(`| 最大值 | ¥${stats.max?.toLocaleString()} |`);
+    if (stats.range !== undefined) lines.push(`| 极差 | ¥${stats.range.toLocaleString()} |`);
+  }
+
+  const discount = (result as any).discount_results;
+  if (discount?.length) {
+    lines.push(``, `## 降价分析`, ``);
+    for (const r of discount) {
+      lines.push(`- ${r.name}: 降幅 ${r.discount_pct}% (${r.strategy})`);
+    }
+  }
+
+  if ((result as any).ai_analysis) {
+    lines.push(``, `## AI 综合分析`, ``, (result as any).ai_analysis);
+  }
+
+  return lines.join("\n");
+}
+
+function generateExtractMarkdown(result: ExtractResultRecord): string {
+  return result.content || "";
+}
 
 // --- 主组件 ---
 
@@ -121,6 +192,13 @@ export default function DatabasePage() {
   // 下载中状态
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [downloadError, setDownloadError] = useState<string | null>(null);
+  const [batchDownloading, setBatchDownloading] = useState(false);
+
+  // 多选状态
+  const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
+  const [selectedSimulates, setSelectedSimulates] = useState<Set<string>>(new Set());
+  const [selectedOpenings, setSelectedOpenings] = useState<Set<string>>(new Set());
+  const [selectedExtracts, setSelectedExtracts] = useState<Set<string>>(new Set());
 
   // --- 数据加载 ---
 
@@ -277,6 +355,224 @@ export default function DatabasePage() {
     }
   };
 
+  // --- 批量操作处理 ---
+
+  const handleBatchDeleteFiles = async () => {
+    if (selectedFiles.size === 0) return;
+    setConfirmAction({
+      title: "批量删除文件",
+      message: `确定删除选中的 ${selectedFiles.size} 个文件？`,
+      onConfirm: async () => {
+        for (const id of selectedFiles) {
+          try {
+            await apiDeleteFile(id);
+          } catch { /* ignore individual failures */ }
+        }
+        setSelectedFiles(new Set());
+        fetchFiles(filesPage);
+        loadStats();
+      },
+    });
+  };
+
+  const handleBatchDownloadFiles = async () => {
+    if (selectedFiles.size === 0) return;
+    setBatchDownloading(true);
+    setDownloadError(null);
+    try {
+      const ids = Array.from(selectedFiles);
+      const blob = await batchDownloadFiles(ids);
+      downloadBlob(blob, "batch_download.zip");
+      setSelectedFiles(new Set());
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "批量下载失败";
+      setDownloadError(msg);
+    } finally {
+      setBatchDownloading(false);
+    }
+  };
+
+  const handleBatchDeleteSimulates = async () => {
+    if (selectedSimulates.size === 0) return;
+    setConfirmAction({
+      title: "批量删除任务",
+      message: `确定删除选中的 ${selectedSimulates.size} 个模拟任务？`,
+      onConfirm: async () => {
+        for (const id of selectedSimulates) {
+          try {
+            await apiDeleteSimulate(id);
+          } catch { /* ignore individual failures */ }
+        }
+        setSelectedSimulates(new Set());
+        fetchSimulates(simulatesPage);
+        loadStats();
+      },
+    });
+  };
+
+  const handleBatchDownloadSimulates = async () => {
+    if (selectedSimulates.size === 0) return;
+    setBatchDownloading(true);
+    setDownloadError(null);
+    try {
+      const zip = new JSZip();
+      const selected = simulatesData.filter((t) => selectedSimulates.has(t.task_id));
+      for (const task of selected) {
+        zip.file(`simulate_${task.task_id}.md`, generateSimulateMarkdown(task));
+      }
+      const blob = await zip.generateAsync({ type: "blob" });
+      downloadBlob(blob, "simulate_reports.zip");
+      setSelectedSimulates(new Set());
+    } catch (err) {
+      setDownloadError(err instanceof Error ? err.message : "批量下载失败");
+    } finally {
+      setBatchDownloading(false);
+    }
+  };
+
+  const handleBatchDeleteOpenings = async () => {
+    if (selectedOpenings.size === 0) return;
+    setConfirmAction({
+      title: "批量删除开标结果",
+      message: `确定删除选中的 ${selectedOpenings.size} 个开标结果？`,
+      onConfirm: async () => {
+        for (const id of selectedOpenings) {
+          try {
+            await apiDeleteOpening(id);
+          } catch { /* ignore individual failures */ }
+        }
+        setSelectedOpenings(new Set());
+        fetchOpenings(openingsPage);
+        loadStats();
+      },
+    });
+  };
+
+  const handleBatchDownloadOpenings = async () => {
+    if (selectedOpenings.size === 0) return;
+    setBatchDownloading(true);
+    setDownloadError(null);
+    try {
+      const zip = new JSZip();
+      const selected = openingsData.filter((o) => selectedOpenings.has(o.id));
+      for (const r of selected) {
+        zip.file(`opening_${r.id}.md`, generateOpeningMarkdown(r));
+      }
+      const blob = await zip.generateAsync({ type: "blob" });
+      downloadBlob(blob, "opening_reports.zip");
+      setSelectedOpenings(new Set());
+    } catch (err) {
+      setDownloadError(err instanceof Error ? err.message : "批量下载失败");
+    } finally {
+      setBatchDownloading(false);
+    }
+  };
+
+  const handleBatchDeleteExtracts = async () => {
+    if (selectedExtracts.size === 0) return;
+    setConfirmAction({
+      title: "批量删除提取结果",
+      message: `确定删除选中的 ${selectedExtracts.size} 个提取结果？`,
+      onConfirm: async () => {
+        for (const id of selectedExtracts) {
+          try {
+            await apiDeleteExtract(id);
+          } catch { /* ignore individual failures */ }
+        }
+        setSelectedExtracts(new Set());
+        fetchExtracts(extractsPage);
+        loadStats();
+      },
+    });
+  };
+
+  const handleBatchDownloadExtracts = async () => {
+    if (selectedExtracts.size === 0) return;
+    setBatchDownloading(true);
+    setDownloadError(null);
+    try {
+      const zip = new JSZip();
+      const selected = extractsData.filter((e) => selectedExtracts.has(e.id));
+      for (const r of selected) {
+        const filename = `extract_${r.id}_${r.template_type}.md`;
+        zip.file(filename, generateExtractMarkdown(r));
+      }
+      const blob = await zip.generateAsync({ type: "blob" });
+      downloadBlob(blob, "extract_results.zip");
+      setSelectedExtracts(new Set());
+    } catch (err) {
+      setDownloadError(err instanceof Error ? err.message : "批量下载失败");
+    } finally {
+      setBatchDownloading(false);
+    }
+  };
+
+  // --- 多选处理 ---
+
+  const toggleFileSelect = (id: string) => {
+    setSelectedFiles((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleAllFileSelect = (ids: string[]) => {
+    setSelectedFiles((prev) => {
+      if (prev.size === ids.length) return new Set();
+      return new Set(ids);
+    });
+  };
+
+  const toggleSimulateSelect = (id: string) => {
+    setSelectedSimulates((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleAllSimulateSelect = (ids: string[]) => {
+    setSelectedSimulates((prev) => {
+      if (prev.size === ids.length) return new Set();
+      return new Set(ids);
+    });
+  };
+
+  const toggleOpeningSelect = (id: string) => {
+    setSelectedOpenings((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleAllOpeningSelect = (ids: string[]) => {
+    setSelectedOpenings((prev) => {
+      if (prev.size === ids.length) return new Set();
+      return new Set(ids);
+    });
+  };
+
+  const toggleExtractSelect = (id: string) => {
+    setSelectedExtracts((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleAllExtractSelect = (ids: string[]) => {
+    setSelectedExtracts((prev) => {
+      if (prev.size === ids.length) return new Set();
+      return new Set(ids);
+    });
+  };
+
   // --- Tab 切换懒加载 ---
 
   const handleTabChange = (key: string) => {
@@ -406,6 +702,40 @@ export default function DatabasePage() {
       {/* --- 文件管理 Tab --- */}
       {activeTab === "files" && (
         <div>
+          {/* 批量操作栏 */}
+          {selectedFiles.size > 0 && (
+            <div className="flex items-center gap-3 mb-4 p-3 rounded-lg bg-muted/50 border border-border">
+              <span className="text-sm">
+                已选择 <strong>{selectedFiles.size}</strong> 个文件
+              </span>
+              <button
+                className="px-3 py-1.5 bg-primary text-primary-foreground rounded hover:bg-primary/90 text-sm flex items-center gap-1.5 disabled:opacity-50"
+                onClick={handleBatchDownloadFiles}
+                disabled={batchDownloading}
+              >
+                {batchDownloading ? (
+                  <span className="inline-block w-4 h-4 border-2 border-primary-foreground/30 border-t-primary-foreground rounded-full animate-spin" />
+                ) : (
+                  <Archive className="h-4 w-4" />
+                )}
+                批量下载
+              </button>
+              <button
+                className="px-3 py-1.5 bg-destructive text-destructive-foreground rounded hover:bg-destructive/90 text-sm flex items-center gap-1.5"
+                onClick={handleBatchDeleteFiles}
+              >
+                <Trash2 className="h-4 w-4" />
+                批量删除
+              </button>
+              <button
+                className="px-3 py-1.5 border rounded hover:bg-muted text-sm"
+                onClick={() => setSelectedFiles(new Set())}
+              >
+                取消选择
+              </button>
+            </div>
+          )}
+
           {/* 筛选 */}
           <div className="flex items-center gap-3 mb-4">
             <span className="text-sm text-muted-foreground">文件类型：</span>
@@ -430,6 +760,14 @@ export default function DatabasePage() {
             <table className="w-full">
               <thead className="bg-muted/50">
                 <tr>
+                  <th className="p-3 text-left font-semibold text-sm w-10">
+                    <input
+                      type="checkbox"
+                      className="rounded"
+                      checked={filesData.length > 0 && selectedFiles.size === filesData.length}
+                      onChange={() => toggleAllFileSelect(filesData.map((f) => f.id))}
+                    />
+                  </th>
                   <th className="p-3 text-left font-semibold text-sm">ID</th>
                   <th className="p-3 text-left font-semibold text-sm">
                     文件名
@@ -448,7 +786,7 @@ export default function DatabasePage() {
                 {filesLoading ? (
                   <tr>
                     <td
-                      colSpan={6}
+                      colSpan={7}
                       className="p-8 text-center text-muted-foreground"
                     >
                       加载中...
@@ -457,7 +795,7 @@ export default function DatabasePage() {
                 ) : filesData.length === 0 ? (
                   <tr>
                     <td
-                      colSpan={6}
+                      colSpan={7}
                       className="p-8 text-center text-muted-foreground"
                     >
                       暂无文件
@@ -465,7 +803,15 @@ export default function DatabasePage() {
                   </tr>
                 ) : (
                   filesData.map((file) => (
-                    <tr key={file.id} className="hover:bg-muted/30">
+                    <tr key={file.id} className={cn("hover:bg-muted/30", selectedFiles.has(file.id) && "bg-primary/5")}>
+                      <td className="p-3">
+                        <input
+                          type="checkbox"
+                          className="rounded"
+                          checked={selectedFiles.has(file.id)}
+                          onChange={() => toggleFileSelect(file.id)}
+                        />
+                      </td>
                       <td className="p-3 text-xs text-muted-foreground">
                         {file.id}
                       </td>
@@ -542,6 +888,40 @@ export default function DatabasePage() {
       {/* --- 模拟任务 Tab --- */}
       {activeTab === "simulates" && (
         <div>
+          {/* 批量操作栏 */}
+          {selectedSimulates.size > 0 && (
+            <div className="flex items-center gap-3 mb-4 p-3 rounded-lg bg-muted/50 border border-border">
+              <span className="text-sm">
+                已选择 <strong>{selectedSimulates.size}</strong> 个任务
+              </span>
+              <button
+                className="px-3 py-1.5 bg-primary text-primary-foreground rounded hover:bg-primary/90 text-sm flex items-center gap-1.5 disabled:opacity-50"
+                onClick={handleBatchDownloadSimulates}
+                disabled={batchDownloading}
+              >
+                {batchDownloading ? (
+                  <span className="inline-block w-4 h-4 border-2 border-primary-foreground/30 border-t-primary-foreground rounded-full animate-spin" />
+                ) : (
+                  <Archive className="h-4 w-4" />
+                )}
+                批量下载
+              </button>
+              <button
+                className="px-3 py-1.5 bg-destructive text-destructive-foreground rounded hover:bg-destructive/90 text-sm flex items-center gap-1.5"
+                onClick={handleBatchDeleteSimulates}
+              >
+                <Trash2 className="h-4 w-4" />
+                批量删除
+              </button>
+              <button
+                className="px-3 py-1.5 border rounded hover:bg-muted text-sm"
+                onClick={() => setSelectedSimulates(new Set())}
+              >
+                取消选择
+              </button>
+            </div>
+          )}
+
           <div className="flex items-center gap-3 mb-4">
             <span className="text-sm text-muted-foreground">状态：</span>
             <select
@@ -564,8 +944,16 @@ export default function DatabasePage() {
             <table className="w-full">
               <thead className="bg-muted/50">
                 <tr>
+                  <th className="p-3 text-left font-semibold text-sm w-10">
+                    <input
+                      type="checkbox"
+                      className="rounded"
+                      checked={simulatesData.length > 0 && selectedSimulates.size === simulatesData.length}
+                      onChange={() => toggleAllSimulateSelect(simulatesData.map((t) => t.task_id))}
+                    />
+                  </th>
                   <th className="p-3 text-left font-semibold text-sm">
-                    任务ID
+                    名称
                   </th>
                   <th className="p-3 text-left font-semibold text-sm">状态</th>
                   <th className="p-3 text-left font-semibold text-sm">
@@ -583,7 +971,7 @@ export default function DatabasePage() {
                 {simulatesLoading ? (
                   <tr>
                     <td
-                      colSpan={5}
+                      colSpan={6}
                       className="p-8 text-center text-muted-foreground"
                     >
                       加载中...
@@ -592,7 +980,7 @@ export default function DatabasePage() {
                 ) : simulatesData.length === 0 ? (
                   <tr>
                     <td
-                      colSpan={5}
+                      colSpan={6}
                       className="p-8 text-center text-muted-foreground"
                     >
                       暂无模拟任务
@@ -600,9 +988,17 @@ export default function DatabasePage() {
                   </tr>
                 ) : (
                   simulatesData.map((task) => (
-                    <tr key={task.task_id} className="hover:bg-muted/30">
-                      <td className="p-3 text-xs text-muted-foreground">
-                        {task.task_id}
+                    <tr key={task.task_id} className={cn("hover:bg-muted/30", selectedSimulates.has(task.task_id) && "bg-primary/5")}>
+                      <td className="p-3">
+                        <input
+                          type="checkbox"
+                          className="rounded"
+                          checked={selectedSimulates.has(task.task_id)}
+                          onChange={() => toggleSimulateSelect(task.task_id)}
+                        />
+                      </td>
+                      <td className="p-3 text-sm font-medium">
+                        {task.name || task.task_id}
                       </td>
                       <td className="p-3">
                         <span
@@ -663,11 +1059,54 @@ export default function DatabasePage() {
 
       {/* --- 开标结果 Tab --- */}
       {activeTab === "openings" && (
-        <div className="rounded-xl border border-border overflow-hidden">
-          <table className="w-full">
-            <thead className="bg-muted/50">
-              <tr>
-                <th className="p-3 text-left font-semibold text-sm">ID</th>
+        <div>
+          {/* 批量操作栏 */}
+          {selectedOpenings.size > 0 && (
+            <div className="flex items-center gap-3 mb-4 p-3 rounded-lg bg-muted/50 border border-border">
+              <span className="text-sm">
+                已选择 <strong>{selectedOpenings.size}</strong> 个开标结果
+              </span>
+              <button
+                className="px-3 py-1.5 bg-primary text-primary-foreground rounded hover:bg-primary/90 text-sm flex items-center gap-1.5 disabled:opacity-50"
+                onClick={handleBatchDownloadOpenings}
+                disabled={batchDownloading}
+              >
+                {batchDownloading ? (
+                  <span className="inline-block w-4 h-4 border-2 border-primary-foreground/30 border-t-primary-foreground rounded-full animate-spin" />
+                ) : (
+                  <Archive className="h-4 w-4" />
+                )}
+                批量下载
+              </button>
+              <button
+                className="px-3 py-1.5 bg-destructive text-destructive-foreground rounded hover:bg-destructive/90 text-sm flex items-center gap-1.5"
+                onClick={handleBatchDeleteOpenings}
+              >
+                <Trash2 className="h-4 w-4" />
+                批量删除
+              </button>
+              <button
+                className="px-3 py-1.5 border rounded hover:bg-muted text-sm"
+                onClick={() => setSelectedOpenings(new Set())}
+              >
+                取消选择
+              </button>
+            </div>
+          )}
+
+          <div className="rounded-xl border border-border overflow-hidden">
+            <table className="w-full">
+              <thead className="bg-muted/50">
+                <tr>
+                  <th className="p-3 text-left font-semibold text-sm w-10">
+                    <input
+                      type="checkbox"
+                      className="rounded"
+                      checked={openingsData.length > 0 && selectedOpenings.size === openingsData.length}
+                      onChange={() => toggleAllOpeningSelect(openingsData.map((o) => o.id))}
+                    />
+                  </th>
+                  <th className="p-3 text-left font-semibold text-sm">名称</th>
                 <th className="p-3 text-left font-semibold text-sm">
                   投标人数量
                 </th>
@@ -681,7 +1120,7 @@ export default function DatabasePage() {
               {openingsLoading ? (
                 <tr>
                   <td
-                    colSpan={4}
+                    colSpan={5}
                     className="p-8 text-center text-muted-foreground"
                   >
                     加载中...
@@ -690,7 +1129,7 @@ export default function DatabasePage() {
               ) : openingsData.length === 0 ? (
                 <tr>
                   <td
-                    colSpan={4}
+                    colSpan={5}
                     className="p-8 text-center text-muted-foreground"
                   >
                     暂无开标结果
@@ -698,9 +1137,17 @@ export default function DatabasePage() {
                 </tr>
               ) : (
                 openingsData.map((result) => (
-                  <tr key={result.id} className="hover:bg-muted/30">
-                    <td className="p-3 text-xs text-muted-foreground">
-                      {result.id}
+                  <tr key={result.id} className={cn("hover:bg-muted/30", selectedOpenings.has(result.id) && "bg-primary/5")}>
+                    <td className="p-3">
+                      <input
+                        type="checkbox"
+                        className="rounded"
+                        checked={selectedOpenings.has(result.id)}
+                        onChange={() => toggleOpeningSelect(result.id)}
+                      />
+                    </td>
+                    <td className="p-3 text-sm font-medium">
+                      {result.name || result.id}
                     </td>
                     <td className="p-3">{result.bidder_count ?? "-"}</td>
                     <td className="p-3 text-muted-foreground text-sm">
@@ -741,30 +1188,74 @@ export default function DatabasePage() {
             onPageChange={fetchOpenings}
           />
         </div>
+        </div>
       )}
 
       {/* --- 提取结果 Tab --- */}
       {activeTab === "extracts" && (
-        <div className="rounded-xl border border-border overflow-hidden">
-          <table className="w-full">
-            <thead className="bg-muted/50">
-              <tr>
-                <th className="p-3 text-left font-semibold text-sm">ID</th>
-                <th className="p-3 text-left font-semibold text-sm">
-                  模板类型
-                </th>
-                <th className="p-3 text-left font-semibold text-sm">模式</th>
-                <th className="p-3 text-left font-semibold text-sm">
-                  创建时间
-                </th>
-                <th className="p-3 text-right font-semibold text-sm">操作</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y">
+        <div>
+          {/* 批量操作栏 */}
+          {selectedExtracts.size > 0 && (
+            <div className="flex items-center gap-3 mb-4 p-3 rounded-lg bg-muted/50 border border-border">
+              <span className="text-sm">
+                已选择 <strong>{selectedExtracts.size}</strong> 个提取结果
+              </span>
+              <button
+                className="px-3 py-1.5 bg-primary text-primary-foreground rounded hover:bg-primary/90 text-sm flex items-center gap-1.5 disabled:opacity-50"
+                onClick={handleBatchDownloadExtracts}
+                disabled={batchDownloading}
+              >
+                {batchDownloading ? (
+                  <span className="inline-block w-4 h-4 border-2 border-primary-foreground/30 border-t-primary-foreground rounded-full animate-spin" />
+                ) : (
+                  <Archive className="h-4 w-4" />
+                )}
+                批量下载
+              </button>
+              <button
+                className="px-3 py-1.5 bg-destructive text-destructive-foreground rounded hover:bg-destructive/90 text-sm flex items-center gap-1.5"
+                onClick={handleBatchDeleteExtracts}
+              >
+                <Trash2 className="h-4 w-4" />
+                批量删除
+              </button>
+              <button
+                className="px-3 py-1.5 border rounded hover:bg-muted text-sm"
+                onClick={() => setSelectedExtracts(new Set())}
+              >
+                取消选择
+              </button>
+            </div>
+          )}
+
+          <div className="rounded-xl border border-border overflow-hidden">
+            <table className="w-full">
+              <thead className="bg-muted/50">
+                <tr>
+                  <th className="p-3 text-left font-semibold text-sm w-10">
+                    <input
+                      type="checkbox"
+                      className="rounded"
+                      checked={extractsData.length > 0 && selectedExtracts.size === extractsData.length}
+                      onChange={() => toggleAllExtractSelect(extractsData.map((e) => e.id))}
+                    />
+                  </th>
+                  <th className="p-3 text-left font-semibold text-sm">名称</th>
+                  <th className="p-3 text-left font-semibold text-sm">
+                    模板类型
+                  </th>
+                  <th className="p-3 text-left font-semibold text-sm">模式</th>
+                  <th className="p-3 text-left font-semibold text-sm">
+                    创建时间
+                  </th>
+                  <th className="p-3 text-right font-semibold text-sm">操作</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y">
               {extractsLoading ? (
                 <tr>
                   <td
-                    colSpan={5}
+                    colSpan={6}
                     className="p-8 text-center text-muted-foreground"
                   >
                     加载中...
@@ -773,7 +1264,7 @@ export default function DatabasePage() {
               ) : extractsData.length === 0 ? (
                 <tr>
                   <td
-                    colSpan={5}
+                    colSpan={6}
                     className="p-8 text-center text-muted-foreground"
                   >
                     暂无提取结果
@@ -781,9 +1272,17 @@ export default function DatabasePage() {
                 </tr>
               ) : (
                 extractsData.map((result) => (
-                  <tr key={result.id} className="hover:bg-muted/30">
-                    <td className="p-3 text-xs text-muted-foreground">
-                      {result.id}
+                  <tr key={result.id} className={cn("hover:bg-muted/30", selectedExtracts.has(result.id) && "bg-primary/5")}>
+                    <td className="p-3">
+                      <input
+                        type="checkbox"
+                        className="rounded"
+                        checked={selectedExtracts.has(result.id)}
+                        onChange={() => toggleExtractSelect(result.id)}
+                      />
+                    </td>
+                    <td className="p-3 text-sm font-medium">
+                      {result.name || result.id}
                     </td>
                     <td className="p-3">
                       <span className="px-2 py-1 rounded text-xs bg-muted text-muted-foreground">
@@ -851,6 +1350,7 @@ export default function DatabasePage() {
             total={extractsTotal}
             onPageChange={fetchExtracts}
           />
+        </div>
         </div>
       )}
 

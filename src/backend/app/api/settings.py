@@ -80,18 +80,12 @@ async def configure_provider(provider_name: str, config: ProviderConfig):
 
 @router.post("/test")
 async def test_connection(request: TestConnectionRequest, user: dict = Depends(get_current_user)):
-    """
-    Test connection to an AI provider. Checks user-stored API key first.
-
-    Args:
-        request: Test connection request
-
-    Returns:
-        Test result with latency
-    """
+    """Test connection to an AI provider."""
     try:
         llm_service = LLMService()
-        result = await llm_service.test_connection(request.provider, user_id=user["id"])
+        result = await llm_service.test_connection(
+            request.provider, model=request.model, user_id=user["id"], api_key=request.apiKey
+        )
 
         return {
             "success": result["success"],

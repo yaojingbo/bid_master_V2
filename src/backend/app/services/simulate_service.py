@@ -29,15 +29,23 @@ class SimulateTask:
 
 
 class SimulateService:
-    """模拟编制服务 - 4步流程"""
+    """模拟编制服务 - 4步流程（按 user_id 隔离）"""
 
     def __init__(self):
-        self._tasks: dict[str, SimulateTask] = {}
+        # 按 user_id 隔离的任务存储
+        self._tasks: dict[str, dict[str, SimulateTask]] = {}
+
+    def _get_user_tasks(self, user_id: str) -> dict[str, SimulateTask]:
+        """获取或创建用户专属的任务存储"""
+        if user_id not in self._tasks:
+            self._tasks[user_id] = {}
+        return self._tasks[user_id]
 
     def create_task(self, file_ids: list[str], user_id: str = None) -> SimulateTask:
         """创建模拟任务（Step 0）"""
         task_id = f"sim_{uuid.uuid4().hex[:10]}"
         from datetime import datetime
+        from app.infrastructure.mock_storage import get_file
         task = SimulateTask(
             task_id=task_id,
             file_ids=file_ids,
@@ -45,10 +53,23 @@ class SimulateService:
             status="pending",
             created_at=datetime.now().isoformat(),
         )
-        self._tasks[task_id] = task
-        # Also register in mock_storage for database page visibility
+        user_tasks = self._get_user_tasks(user_id)
+        user_tasks[task_id] = task
+
+        # 根据源文件名生成任务名称
+        file_names = []
+        for fid in file_ids[:3]:
+            f = get_file(fid, user_id)
+            if f:
+                name = f.get("original_name", "")
+                if name:
+                    file_names.append(name.rsplit(".", 1)[0])
+        ts = datetime.now().strftime("%m%d_%H%M")
+        task_name = f"模拟编制_{'_'.join(file_names[:2])}_{ts}" if file_names else f"模拟编制_{ts}"
+
         add_simulate({
             "task_id": task_id,
+            "name": task_name,
             "status": "pending",
             "current_step": 0,
             "params": {},
@@ -59,24 +80,28 @@ class SimulateService:
         }, user_id=user_id)
         return task
 
-    def get_task(self, task_id: str) -> Optional[SimulateTask]:
-        """获取任务"""
-        return self._tasks.get(task_id)
+    def get_task(self, task_id: str, user_id: str = None) -> Optional[SimulateTask]:
+        """获取任务（仅返回当前用户的任务）"""
+        if user_id:
+            return self._get_user_tasks(user_id).get(task_id)
+        return None
 
-    def list_tasks(self) -> list[SimulateTask]:
-        """列出所有任务"""
-        return list(self._tasks.values())
+    def list_tasks(self, user_id: str = None) -> list[SimulateTask]:
+        """列出当前用户的任务"""
+        if user_id:
+            return list(self._get_user_tasks(user_id).values())
+        return []
 
-    def delete_task(self, task_id: str) -> bool:
-        """删除任务"""
-        if task_id in self._tasks:
-            del self._tasks[task_id]
+    def delete_task(self, task_id: str, user_id: str = None) -> bool:
+        """删除任务（仅当前用户）"""
+        if user_id and task_id in self._get_user_tasks(user_id):
+            del self._get_user_tasks(user_id)[task_id]
             return True
         return False
 
-    async def run_step1(self, task_id: str) -> SimulateTask:
+    async def run_step1(self, task_id: str, user_id: str = None) -> SimulateTask:
         """Step 1: PDF转换"""
-        task = self._tasks.get(task_id)
+        task = self.get_task(task_id, user_id)
         if not task:
             raise ValueError(f"Task {task_id} not found")
 
@@ -118,13 +143,13 @@ class SimulateService:
 
         return task
 
-    async def run_step2_stream(self, task_id: str, provider: str = "deepseek") -> AsyncGenerator[Dict[str, Any], None]:
+    async def run_step2_stream(self, task_id: str, provider: str = "deepseek", user_id: str = None, model: str = None) -> AsyncGenerator[Dict[str, Any], None]:
         """Step 2: 提取（SSE流式）- LLM 在后台 Task 中运行，不受 SSE 断连影响。"""
-        task = self._tasks.get(task_id)
+        task = self.get_task(task_id, user_id)
         if not task:
             raise ValueError(f"Task {task_id} not found")
 
-        yield {"type": "progress", "message": "正在分析文档内容...", "phase": "processing", "percentage": 10}
+        yield {"type": "progress", "message": "正在读取文档...", "phase": "reading", "percentage": 15}
 
         # Get file contents
         from app.services.file_service import get_file_service
@@ -152,13 +177,15 @@ class SimulateService:
             {"role": "user", "content": user_prompt},
         ]
 
+        yield {"type": "progress", "message": f"AI 正在提取要素（{provider}/{model or 'default'}）...", "phase": "analyzing", "percentage": 40}
+
         chunk_queue: asyncio.Queue = asyncio.Queue()
         result_holder = {"text": "", "done": False}
         _saved = False
 
         async def _llm_bg():
             try:
-                async for chunk in llm.llm.complete(provider, messages, stream=True):
+                async for chunk in llm.llm.complete(provider, messages, stream=True, user_id=user_id, model=model):
                     result_holder["text"] += chunk
                     await chunk_queue.put({"type": "content", "content": chunk})
                 result_holder["done"] = True
@@ -172,6 +199,7 @@ class SimulateService:
             while True:
                 event = await chunk_queue.get()
                 if event["type"] == "content":
+                    yield {"type": "llm_progress", "message": "正在解析要素...", "phase": "generating", "percentage": 70}
                     yield event
                 elif event["type"] == "llm_done":
                     task.step2_result = result_holder["text"]
@@ -218,13 +246,13 @@ class SimulateService:
                             })
                     asyncio.create_task(_ensure_save())
 
-    async def run_step3_stream(self, task_id: str, provider: str = "deepseek") -> AsyncGenerator[Dict[str, Any], None]:
+    async def run_step3_stream(self, task_id: str, provider: str = "deepseek", user_id: str = None, model: str = None) -> AsyncGenerator[Dict[str, Any], None]:
         """Step 3: 对比（SSE流式）- LLM 在后台 Task 中运行。"""
-        task = self._tasks.get(task_id)
+        task = self.get_task(task_id, user_id)
         if not task:
             raise ValueError(f"Task {task_id} not found")
 
-        yield {"type": "progress", "message": "正在进行对比分析...", "phase": "processing", "percentage": 10}
+        yield {"type": "progress", "message": "正在进行对比分析...", "phase": "reading", "percentage": 15}
 
         from app.services.llm_service import LLMService
         from app.services.prompt_builder import get_prompt_builder
@@ -239,13 +267,15 @@ class SimulateService:
             {"role": "user", "content": user_prompt},
         ]
 
+        yield {"type": "progress", "message": f"AI 正在对比分析（{provider}/{model or 'default'}）...", "phase": "analyzing", "percentage": 40}
+
         chunk_queue: asyncio.Queue = asyncio.Queue()
         result_holder = {"text": "", "done": False}
         _saved = False
 
         async def _llm_bg():
             try:
-                async for chunk in llm.llm.complete(provider, messages, stream=True):
+                async for chunk in llm.llm.complete(provider, messages, stream=True, user_id=user_id, model=model):
                     result_holder["text"] += chunk
                     await chunk_queue.put({"type": "content", "content": chunk})
                 result_holder["done"] = True
@@ -259,6 +289,7 @@ class SimulateService:
             while True:
                 event = await chunk_queue.get()
                 if event["type"] == "content":
+                    yield {"type": "llm_progress", "message": "正在对比分析...", "phase": "generating", "percentage": 70}
                     yield event
                 elif event["type"] == "llm_done":
                     task.step3_result = result_holder["text"]
@@ -301,13 +332,13 @@ class SimulateService:
                             })
                     asyncio.create_task(_ensure_save())
 
-    async def run_step4_stream(self, task_id: str, params: dict, provider: str = "deepseek") -> AsyncGenerator[Dict[str, Any], None]:
+    async def run_step4_stream(self, task_id: str, params: dict, provider: str = "deepseek", user_id: str = None, model: str = None) -> AsyncGenerator[Dict[str, Any], None]:
         """Step 4: 编制（SSE流式）- LLM 在后台 Task 中运行。"""
-        task = self._tasks.get(task_id)
+        task = self.get_task(task_id, user_id)
         if not task:
             raise ValueError(f"Task {task_id} not found")
 
-        yield {"type": "progress", "message": "正在生成模拟投标文件...", "phase": "generating", "percentage": 10}
+        yield {"type": "progress", "message": "正在生成模拟投标文件...", "phase": "connecting", "percentage": 5}
 
         task.params = params
 
@@ -326,13 +357,15 @@ class SimulateService:
             {"role": "user", "content": user_prompt},
         ]
 
+        yield {"type": "progress", "message": f"AI 正在生成模拟投标文件（{provider}/{model or 'default'}）...", "phase": "analyzing", "percentage": 40}
+
         chunk_queue: asyncio.Queue = asyncio.Queue()
         result_holder = {"text": "", "done": False}
         _saved = False
 
         async def _llm_bg():
             try:
-                async for chunk in llm.llm.complete(provider, messages, stream=True):
+                async for chunk in llm.llm.complete(provider, messages, stream=True, user_id=user_id, model=model):
                     result_holder["text"] += chunk
                     await chunk_queue.put({"type": "content", "content": chunk})
                 result_holder["done"] = True
@@ -346,6 +379,7 @@ class SimulateService:
             while True:
                 event = await chunk_queue.get()
                 if event["type"] == "content":
+                    yield {"type": "llm_progress", "message": "正在组装模拟投标文件...", "phase": "generating", "percentage": 70}
                     yield event
                 elif event["type"] == "llm_done":
                     task.step4_result = result_holder["text"]

@@ -26,6 +26,12 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     claude_api_key: str = ""
 
+    # LLM Providers API Base URLs (OpenAI-compatible providers need custom endpoints)
+    deepseek_base_url: str = "https://api.deepseek.com/v1"
+    dashscope_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    zhipu_base_url: str = "https://open.bigmodel.cn/api/paas/v4"
+    minimax_base_url: str = "https://api.minimaxi.com/v1"
+
     # Ollama (optional, for local)
     ollama_base_url: str = "http://localhost:11434"
 
@@ -51,6 +57,14 @@ class Settings(BaseSettings):
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         "text/csv",
     ]
+
+    # SMTP Email
+    smtp_host: str = ""
+    smtp_port: int = 465
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_from: str = ""
+    frontend_url: str = "http://localhost:3000"
 
 @lru_cache()
 def get_settings() -> Settings:

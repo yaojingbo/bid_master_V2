@@ -5,6 +5,9 @@
  */
 import { create } from "zustand";
 import { authLogin, authRegister, authRefresh, authMe } from "@/lib/auth-api";
+import { useFileStore } from "@/stores/file-store";
+import { useTaskStore } from "@/stores/task-store";
+import { useLogStore } from "@/stores/log-store";
 
 interface User {
   id: string;
@@ -19,7 +22,7 @@ interface AuthState {
   isAuthenticated: boolean;
   isLoading: boolean;
   login: (email: string, password: string) => Promise<void>;
-  register: (email: string, password: string, username?: string) => Promise<void>;
+  register: (email: string, password: string, confirmPassword: string, code: string, username?: string) => Promise<void>;
   logout: () => void;
   refreshAccessToken: () => Promise<string | null>;
   initAuth: () => Promise<void>;
@@ -35,6 +38,11 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     set({ isLoading: true });
     try {
       const res = await authLogin(email, password);
+      useFileStore.getState().clearFiles();
+      useTaskStore.getState().clearExtract();
+      useTaskStore.getState().clearSimulate();
+      useTaskStore.getState().clearStatistics();
+      useLogStore.getState().clearLogs();
       set({
         accessToken: res.access_token,
         user: res.user,
@@ -47,10 +55,15 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     }
   },
 
-  register: async (email, password, username) => {
+  register: async (email, password, confirmPassword, code, username) => {
     set({ isLoading: true });
     try {
-      const res = await authRegister(email, password, username);
+      const res = await authRegister(email, password, confirmPassword, code, username);
+      useFileStore.getState().clearFiles();
+      useTaskStore.getState().clearExtract();
+      useTaskStore.getState().clearSimulate();
+      useTaskStore.getState().clearStatistics();
+      useLogStore.getState().clearLogs();
       set({
         accessToken: res.access_token,
         user: res.user,
@@ -66,6 +79,12 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   logout: () => {
     fetch("/api/auth/logout", { method: "POST", credentials: "include" }).catch(() => {});
     set({ accessToken: null, user: null, isAuthenticated: false });
+    // 清空所有 persist store，防止下一个用户看到当前用户数据
+    useFileStore.getState().clearFiles();
+    useTaskStore.getState().clearExtract();
+    useTaskStore.getState().clearSimulate();
+    useTaskStore.getState().clearStatistics();
+    useLogStore.getState().clearLogs();
   },
 
   refreshAccessToken: async () => {

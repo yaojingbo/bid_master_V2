@@ -285,6 +285,15 @@ def delete_opening(task_id: str, user_id: Optional[str] = None) -> bool:
     return True
 
 
+def update_opening(opening_id: str, updates: dict) -> bool:
+    """Update an opening analysis record."""
+    if opening_id in _mock_openings:
+        _mock_openings[opening_id].update(updates)
+        _save_to_disk()
+        return True
+    return False
+
+
 def list_extracts(page: int = 1, page_size: int = 20, user_id: Optional[str] = None) -> dict:
     records = [r for r in _mock_extracts.values() if r.get("user_id") == user_id]
     records.sort(key=lambda r: r["created_at"], reverse=True)
@@ -339,6 +348,11 @@ def add_simulate(record: dict, user_id: Optional[str] = None) -> dict:
         record["task_id"] = str(uuid.uuid4())[:8]
     if "created_at" not in record:
         record["created_at"] = _now()
+    if "name" not in record:
+        ts = datetime.now().strftime("%m%d_%H%M")
+        file_names = record.get("file_names") or []
+        file_part = "_".join(n.rsplit(".", 1)[0] for n in file_names[:2]) if file_names else ""
+        record["name"] = f"模拟编制_{file_part}_{ts}" if file_part else f"模拟编制_{ts}"
     if user_id:
         record["user_id"] = user_id
     _mock_simulates[record["task_id"]] = record
@@ -352,6 +366,15 @@ def add_opening(record: dict, user_id: Optional[str] = None) -> dict:
         record["id"] = str(uuid.uuid4())[:8]
     if "created_at" not in record:
         record["created_at"] = _now()
+    if "name" not in record:
+        ts = datetime.now().strftime("%m%d_%H%M")
+        file_name = record.get("file_name", "")
+        if file_name:
+            file_part = file_name.rsplit(".", 1)[0]
+            record["name"] = f"开标分析_{file_part}_{ts}"
+        else:
+            project_name = (record.get("meta") or {}).get("project_name", "")
+            record["name"] = f"开标分析_{project_name}_{ts}" if project_name else f"开标分析_{ts}"
     if user_id:
         record["user_id"] = user_id
     _mock_openings[record["id"]] = record
@@ -365,6 +388,15 @@ def add_extract(record: dict, user_id: Optional[str] = None) -> dict:
         record["id"] = str(uuid.uuid4())[:8]
     if "created_at" not in record:
         record["created_at"] = _now()
+    if "name" not in record:
+        ts = datetime.now().strftime("%m%d_%H%M")
+        file_name = record.get("file_name", "")
+        if file_name:
+            file_part = file_name.rsplit(".", 1)[0]
+            record["name"] = f"要素提取_{file_part}_{ts}"
+        else:
+            template = record.get("template_type", "")
+            record["name"] = f"要素提取_{template}_{ts}" if template else f"要素提取_{ts}"
     if user_id:
         record["user_id"] = user_id
     _mock_extracts[record["id"]] = record
@@ -467,3 +499,63 @@ def list_user_api_keys(user_id: str) -> list[dict]:
         for v in _mock_api_keys.values()
         if v["user_id"] == user_id
     ]
+
+
+# ==============================================
+# Verification Code Storage (in-memory, not persisted)
+# ==============================================
+_verification_codes: dict = {}
+
+
+def save_verification_code(email: str, code: str, expires_at: datetime) -> None:
+    _verification_codes[email] = {"code": code, "expires_at": expires_at.isoformat()}
+
+
+def verify_code(email: str, code: str) -> bool:
+    record = _verification_codes.get(email)
+    if not record:
+        return False
+    if record["code"] != code:
+        return False
+    if datetime.fromisoformat(record["expires_at"]) < datetime.now(timezone.utc):
+        del _verification_codes[email]
+        return False
+    return True
+
+
+def delete_verification_code(email: str) -> None:
+    _verification_codes.pop(email, None)
+
+
+# ==============================================
+# Password Reset Token Storage (in-memory, not persisted)
+# ==============================================
+_reset_tokens: dict = {}
+
+
+def save_reset_token(token: str, user_id: str, expires_at: datetime) -> None:
+    _reset_tokens[token] = {"user_id": user_id, "expires_at": expires_at.isoformat()}
+
+
+def get_reset_token(token: str) -> Optional[dict]:
+    record = _reset_tokens.get(token)
+    if not record:
+        return None
+    if datetime.fromisoformat(record["expires_at"]) < datetime.now(timezone.utc):
+        del _reset_tokens[token]
+        return None
+    return record
+
+
+def delete_reset_token(token: str) -> None:
+    _reset_tokens.pop(token, None)
+
+
+def update_user_password(user_id: str, password_hash: str, salt_hex: str) -> bool:
+    user = _mock_users.get(user_id)
+    if not user:
+        return False
+    user["password_hash"] = password_hash
+    user["salt"] = salt_hex
+    _save_to_disk()
+    return True

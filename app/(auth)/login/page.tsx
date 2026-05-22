@@ -67,6 +67,11 @@ function LoginForm() {
             placeholder="输入密码"
             required
           />
+          <div className="mt-1 text-right">
+            <a href="/forgot-password" className="text-xs text-muted-foreground hover:text-primary">
+              忘记密码？
+            </a>
+          </div>
         </div>
         <button
           type="submit"

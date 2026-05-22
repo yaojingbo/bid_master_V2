@@ -8,7 +8,7 @@ import json
 
 from app.services.llm_service import LLMService
 from app.services.file_service import FileService
-from app.infrastructure.mock_storage import add_extract
+from app.infrastructure.mock_storage import add_extract, get_file
 
 
 def extract_text_from_pdf(content: bytes, max_pages: int = 30) -> str:
@@ -188,7 +188,10 @@ class ExtractService:
             ]
 
             # Notify frontend that AI analysis is starting
-            yield {"type": "progress", "message": "AI 正在分析文档内容，请稍候...", "phase": "analyzing", "percentage": 30}
+            resolved_model = model or self.llm.llm.MODEL_MAP.get(provider, "unknown")
+            if "/" in resolved_model:
+                resolved_model = resolved_model.split("/", 1)[1]
+            yield {"type": "progress", "message": f"AI 正在分析（{provider}/{resolved_model}）...", "phase": "analyzing", "percentage": 30}
 
             # LLM 流式调用 + 进度推送 + JSON 解析
             async for event in self._stream_llm_with_progress(
@@ -214,11 +217,18 @@ class ExtractService:
         result_holder = {"text": "", "done": False, "error": None}
         _saved = False
 
+        file_record = get_file(file_id)
+        file_name = file_record.get("original_name", "") if file_record else ""
+
+        resolved_model = model or self.llm.llm.MODEL_MAP.get(provider, "unknown")
+        if "/" in resolved_model:
+            resolved_model = resolved_model.split("/", 1)[1]
+
         async def _llm_background_task():
             """后台运行 LLM 调用，chunks 推入 Queue。即使 SSE 断连也会继续运行。"""
             try:
                 count = 0
-                async for chunk in self.llm.llm.complete(provider, messages, model=model, stream=True):
+                async for chunk in self.llm.llm.complete(provider, messages, model=model, stream=True, user_id=user_id):
                     result_holder["text"] += chunk
                     count += 1
                     await chunk_queue.put({"type": "chunk", "count": count})
@@ -234,8 +244,9 @@ class ExtractService:
             while True:
                 event = await chunk_queue.get()
                 if event["type"] == "chunk":
-                    if event["count"] % 15 == 0:
-                        yield {"type": "llm_progress", "message": "AI 正在分析文档内容...", "phase": "analyzing", "percentage": min(30 + event["count"] // 3, 85)}
+                    if event["count"] % 5 == 0:
+                        pct = min(30 + event["count"] // 2, 88)
+                        yield {"type": "llm_progress", "message": f"AI 正在分析（{provider}/{resolved_model}）... {pct}%", "phase": "analyzing", "percentage": pct}
                 elif event["type"] == "llm_done":
                     # LLM 完成，解析并保存
                     full_response = result_holder["text"]
@@ -260,6 +271,7 @@ class ExtractService:
 
                             add_extract({
                                 "file_id": file_id,
+                                "file_name": file_name,
                                 "template_type": template_type,
                                 "mode": provider,
                                 "content": json_str,
@@ -278,6 +290,7 @@ class ExtractService:
                         else:
                             add_extract({
                                 "file_id": file_id,
+                                "file_name": file_name,
                                 "template_type": template_type,
                                 "mode": provider,
                                 "content": full_response,
@@ -291,6 +304,7 @@ class ExtractService:
                     except json.JSONDecodeError:
                         add_extract({
                             "file_id": file_id,
+                            "file_name": file_name,
                             "template_type": template_type,
                             "mode": provider,
                             "content": full_response,
@@ -310,19 +324,19 @@ class ExtractService:
             # SSE generator 被取消（客户端断连）时的处理
             if not _saved:
                 if result_holder["done"]:
-                    # LLM 已完成但 SSE 流在推送结果时断开 — 保存完整结果
                     full_response = result_holder["text"]
                     add_extract({
                         "file_id": file_id,
+                        "file_name": file_name,
                         "template_type": template_type,
                         "mode": provider,
                         "content": full_response,
                         "status": "completed_disconnected",
                     }, user_id=user_id)
                 elif result_holder["text"]:
-                    # LLM 还在运行但有部分结果 — 保存部分结果
                     add_extract({
                         "file_id": file_id,
+                        "file_name": file_name,
                         "template_type": template_type,
                         "mode": provider,
                         "content": result_holder["text"],
@@ -336,6 +350,7 @@ class ExtractService:
                         if result_holder["done"] and not _saved:
                             add_extract({
                                 "file_id": file_id,
+                                "file_name": file_name,
                                 "template_type": template_type,
                                 "mode": provider,
                                 "content": result_holder["text"],

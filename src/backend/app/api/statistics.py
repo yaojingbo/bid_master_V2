@@ -7,6 +7,7 @@ import io
 import json
 import logging
 import sys
+import asyncio
 import traceback
 from typing import Optional
 
@@ -18,7 +19,7 @@ from app.services.statistics_service import StatisticsService
 from app.services.llm_service import LLMService
 from app.models.schemas import OpeningAnalysisRequest
 from app.utils.auth_dep import get_current_user
-from app.infrastructure.mock_storage import add_opening
+from app.infrastructure.mock_storage import add_opening, update_opening, get_opening, get_file
 
 logger = logging.getLogger(__name__)
 
@@ -552,9 +553,13 @@ async def analyze_opening(request: OpeningAnalysisRequest, current_user: dict = 
         modules = request.modules or None
         result = compute_all_dimensions(parsed["bidders"], parsed["meta"], modules)
 
+        file_record = get_file(request.fileId)
+        original_name = file_record.get("original_name", "") if file_record else ""
+
         # 保存开标结果到 mock_storage
         add_opening({
             "file_id": request.fileId,
+            "file_name": original_name,
             "bidder_count": result.get("bidder_count", parsed.get("bidder_count", 0)),
             "bid_ranking": result.get("bid_ranking", []),
             "bid_stats": result.get("bid_stats", {}),
@@ -586,6 +591,7 @@ async def analyze_opening_upload(
         # 保存开标结果到 mock_storage
         add_opening({
             "file_id": None,
+            "file_name": file.filename or "",
             "bidder_count": result.get("bidder_count", parsed.get("bidder_count", 0)),
             "bid_ranking": result.get("bid_ranking", []),
             "bid_stats": result.get("bid_stats", {}),
@@ -610,17 +616,36 @@ async def comprehensive_analysis_generator(
     SSE generator for AI comprehensive analysis of opening results.
 
     LLM 调用解耦到后台 asyncio Task，前端断连不会中断 LLM 调用。
+    生成 task_id 并在首条事件返回，前端可用此 ID 轮询结果。
     """
     import asyncio
+    import uuid
 
     llm_service = LLMService()
+
+    task_id = str(uuid.uuid4())[:8]
+    add_opening({
+        "id": task_id,
+        "file_id": analysis_data.get("file_id"),
+        "file_name": analysis_data.get("file_name", ""),
+        "bidder_count": analysis_data.get("bidder_count", 0),
+        "bid_ranking": analysis_data.get("bid_ranking", []),
+        "bid_stats": analysis_data.get("bid_stats", {}),
+        "meta": analysis_data.get("meta", {}),
+        "ai_analysis": "",
+        "status": "running",
+    }, user_id=user_id)
+
+    yield {
+        "event": "message",
+        "data": json.dumps({"type": "task_created", "task_id": task_id}),
+    }
 
     yield {
         "event": "progress",
         "data": json.dumps({"type": "progress", "message": "AI 正在生成综合分析..."}),
     }
 
-    # Build analysis prompt
     summary = f"""请对以下开标分析结果进行综合分析，给出专业建议：
 
 投标单位数量: {analysis_data.get('bidder_count', 0)}
@@ -647,7 +672,6 @@ async def comprehensive_analysis_generator(
     result_holder = {"text": "", "done": False, "error": None}
 
     async def _llm_background_task():
-        """后台运行 LLM 调用，将 chunks 推入 Queue。"""
         try:
             async for chunk in llm_service.llm.complete(provider, messages, model=model, stream=True, user_id=user_id):
                 result_holder["text"] += chunk
@@ -671,28 +695,22 @@ async def comprehensive_analysis_generator(
                     "data": json.dumps({"type": "content", "content": event["content"]}),
                 }
             elif event["type"] == "llm_done":
-                # LLM 完成，保存完整结果
-                full_response = result_holder["text"]
-                add_opening({
-                    "file_id": analysis_data.get("file_id"),
-                    "bidder_count": analysis_data.get("bidder_count", 0),
-                    "bid_ranking": analysis_data.get("bid_ranking", []),
-                    "bid_stats": analysis_data.get("bid_stats", {}),
-                    "meta": analysis_data.get("meta", {}),
-                    "ai_analysis": full_response,
-                    "status": "completed_disconnected",
-                }, user_id=user_id)
+                update_opening(task_id, {
+                    "ai_analysis": result_holder["text"],
+                    "status": "completed",
+                })
                 _saved = True
-
                 yield {
                     "event": "done",
                     "data": json.dumps({
                         "type": "done",
-                        "data": {"summary": "AI 综合分析完成", "contentLength": len(full_response)},
+                        "data": {"summary": "AI 综合分析完成", "contentLength": len(result_holder["text"])},
                     }),
                 }
                 break
             elif event["type"] == "llm_error":
+                update_opening(task_id, {"status": "error", "ai_analysis": result_holder["text"]})
+                _saved = True
                 yield {
                     "event": "error",
                     "data": json.dumps({"type": "error", "message": event["error"]}),
@@ -702,40 +720,14 @@ async def comprehensive_analysis_generator(
     finally:
         if not _saved:
             if result_holder["done"]:
-                # LLM 完成但 SSE 在保存结果前断开
-                add_opening({
-                    "file_id": analysis_data.get("file_id"),
-                    "bidder_count": analysis_data.get("bidder_count", 0),
-                    "bid_ranking": analysis_data.get("bid_ranking", []),
-                    "bid_stats": analysis_data.get("bid_stats", {}),
-                    "meta": analysis_data.get("meta", {}),
-                    "ai_analysis": result_holder["text"],
-                    "status": "completed_background",
-                }, user_id=user_id)
+                update_opening(task_id, {"ai_analysis": result_holder["text"], "status": "completed"})
             elif result_holder["text"]:
-                # LLM 还在运行，保存已有部分，等后台 Task 完成后再补全
-                add_opening({
-                    "file_id": analysis_data.get("file_id"),
-                    "bidder_count": analysis_data.get("bidder_count", 0),
-                    "bid_ranking": analysis_data.get("bid_ranking", []),
-                    "bid_stats": analysis_data.get("bid_stats", {}),
-                    "meta": analysis_data.get("meta", {}),
-                    "ai_analysis": result_holder["text"],
-                    "status": "partial",
-                }, user_id=user_id)
+                update_opening(task_id, {"ai_analysis": result_holder["text"], "status": "partial"})
 
                 async def _ensure_save_on_completion():
                     await background_task
-                    if result_holder["done"] and not _saved:
-                        add_opening({
-                            "file_id": analysis_data.get("file_id"),
-                            "bidder_count": analysis_data.get("bidder_count", 0),
-                            "bid_ranking": analysis_data.get("bid_ranking", []),
-                            "bid_stats": analysis_data.get("bid_stats", {}),
-                            "meta": analysis_data.get("meta", {}),
-                            "ai_analysis": result_holder["text"],
-                            "status": "completed_background",
-                        }, user_id=user_id)
+                    if result_holder["done"]:
+                        update_opening(task_id, {"ai_analysis": result_holder["text"], "status": "completed"})
 
                 asyncio.create_task(_ensure_save_on_completion())
 
@@ -788,6 +780,181 @@ async def analyze_comprehensive_upload(
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/analyze/comprehensive/start")
+async def start_comprehensive_analysis(
+    request: OpeningAnalysisRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    启动综合分析后台任务，立即返回 task_id。
+    LLM 在后台运行，前端通过 GET /analysis-task/{task_id} 轮询结果。
+    """
+    import asyncio
+    import uuid
+
+    try:
+        from app.services.file_service import get_file_service
+        file_service = get_file_service()
+
+        content = await file_service.download(request.fileId)
+        filename = "bid_opening.xlsx"
+        parsed = parse_opening_excel(content, filename)
+        modules = request.modules or None
+        analysis_data = compute_all_dimensions(parsed["bidders"], parsed["meta"], modules)
+
+        file_record = get_file(request.fileId)
+        original_name = file_record.get("original_name", "") if file_record else ""
+
+        task_id = str(uuid.uuid4())[:8]
+        user_id = current_user["id"]
+
+        add_opening({
+            "id": task_id,
+            "file_id": analysis_data.get("file_id"),
+            "file_name": original_name,
+            "bidder_count": analysis_data.get("bidder_count", 0),
+            "bid_ranking": analysis_data.get("bid_ranking", []),
+            "bid_stats": analysis_data.get("bid_stats", {}),
+            "meta": analysis_data.get("meta", {}),
+            "ai_analysis": "",
+            "status": "running",
+        }, user_id=user_id)
+
+        async def _run_llm():
+            llm_service = LLMService()
+            provider = request.provider or "deepseek"
+            model = request.model if hasattr(request, "model") else None
+
+            summary = f"""请对以下开标分析结果进行综合分析，给出专业建议：
+
+投标单位数量: {analysis_data.get('bidder_count', 0)}
+项目名称: {analysis_data.get('meta', {}).get('project_name', '未知')}
+
+投标价排名: {json.dumps(analysis_data.get('bid_ranking', []), ensure_ascii=False)}
+降价分析: {json.dumps(analysis_data.get('discount_results', []), ensure_ascii=False)}
+统计分析: {json.dumps(analysis_data.get('bid_stats', {}), ensure_ascii=False)}
+评分对比: {json.dumps(analysis_data.get('score_ranking', []), ensure_ascii=False)}
+基准价对比: {json.dumps(analysis_data.get('benchmark_comparison', []), ensure_ascii=False)}
+
+请从以下角度分析：
+1. 竞争态势总体评价
+2. 价格策略建议
+3. 评分趋势分析
+4. 中标可能性预测"""
+
+            messages = [
+                {"role": "system", "content": "你是一个专业的招投标分析顾问，请基于数据给出客观、专业的分析建议。"},
+                {"role": "user", "content": summary},
+            ]
+
+            result_text = ""
+            try:
+                async for chunk in llm_service.llm.complete(provider, messages, model=model, stream=True, user_id=user_id):
+                    result_text += chunk
+                update_opening(task_id, {"ai_analysis": result_text, "status": "completed"})
+            except Exception as e:
+                update_opening(task_id, {"ai_analysis": result_text, "status": "error"})
+
+        asyncio.create_task(_run_llm())
+
+        return {"success": True, "task_id": task_id}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/analyze/comprehensive/upload/start")
+async def start_comprehensive_analysis_upload(
+    file: UploadFile = File(...),
+    modules: Optional[str] = Form(None),
+    provider: Optional[str] = Form("deepseek"),
+    model: Optional[str] = Form(None),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    上传文件 + 启动综合分析后台任务，立即返回 task_id。
+    """
+    import asyncio
+    import uuid
+
+    try:
+        content = await file.read()
+        parsed = parse_opening_excel(content, file.filename)
+        module_list = json.loads(modules) if modules else None
+        analysis_data = compute_all_dimensions(parsed["bidders"], parsed["meta"], module_list)
+
+        task_id = str(uuid.uuid4())[:8]
+        user_id = current_user["id"]
+
+        resolved_model = model or "deepseek-chat"
+        add_opening({
+            "id": task_id,
+            "file_id": analysis_data.get("file_id"),
+            "file_name": file.filename or "",
+            "bidder_count": analysis_data.get("bidder_count", 0),
+            "bid_ranking": analysis_data.get("bid_ranking", []),
+            "bid_stats": analysis_data.get("bid_stats", {}),
+            "meta": analysis_data.get("meta", {}),
+            "ai_analysis": "",
+            "status": "running",
+            "provider": provider or "deepseek",
+            "model": resolved_model,
+        }, user_id=user_id)
+
+        async def _run_llm():
+            llm_service = LLMService()
+
+            summary = f"""请对以下开标分析结果进行综合分析，给出专业建议：
+
+投标单位数量: {analysis_data.get('bidder_count', 0)}
+项目名称: {analysis_data.get('meta', {}).get('project_name', '未知')}
+
+投标价排名: {json.dumps(analysis_data.get('bid_ranking', []), ensure_ascii=False)}
+降价分析: {json.dumps(analysis_data.get('discount_results', []), ensure_ascii=False)}
+统计分析: {json.dumps(analysis_data.get('bid_stats', {}), ensure_ascii=False)}
+评分对比: {json.dumps(analysis_data.get('score_ranking', []), ensure_ascii=False)}
+基准价对比: {json.dumps(analysis_data.get('benchmark_comparison', []), ensure_ascii=False)}
+
+请从以下角度分析：
+1. 竞争态势总体评价
+2. 价格策略建议
+3. 评分趋势分析
+4. 中标可能性预测"""
+
+            messages = [
+                {"role": "system", "content": "你是一个专业的招投标分析顾问。请基于数据给出客观、专业的分析建议。所有输出必须使用中文，直接输出分析内容，不要有任何开场白、自我介绍或思考过程。"},
+                {"role": "user", "content": summary},
+            ]
+
+            result_text = ""
+            try:
+                async def _do_stream():
+                    nonlocal result_text
+                    async for chunk in llm_service.llm.complete(provider or "deepseek", messages, model=model, stream=True, user_id=user_id):
+                        result_text += chunk
+
+                await asyncio.wait_for(_do_stream(), timeout=180)
+                update_opening(task_id, {"ai_analysis": result_text, "status": "completed"})
+            except asyncio.TimeoutError:
+                update_opening(task_id, {"ai_analysis": result_text or "分析超时，请检查 API Key 配置或重试", "status": "error"})
+            except Exception as e:
+                update_opening(task_id, {"ai_analysis": result_text or f"分析失败: {str(e)}", "status": "error"})
+
+        asyncio.create_task(_run_llm())
+
+        return {"success": True, "task_id": task_id}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/analysis-task/{task_id}")
+async def get_analysis_task(task_id: str, current_user: dict = Depends(get_current_user)):
+    """获取综合分析任务状态和结果（前端轮询用）。"""
+    record = get_opening(task_id, user_id=current_user["id"])
+    if not record:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return {"success": True, "data": record}
 
 
 @router.get("/export/{analysis_id}")

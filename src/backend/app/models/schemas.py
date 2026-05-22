@@ -102,6 +102,7 @@ class ProvidersResponse(BaseModel):
 
 class TestConnectionRequest(BaseModel):
     provider: str
+    model: Optional[str] = None
     apiKey: Optional[str] = None
 
 
@@ -158,7 +159,23 @@ class HealthResponse(BaseModel):
 class RegisterRequest(BaseModel):
     email: str = Field(..., description="邮箱地址（登录标识）", pattern=r"^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$")
     password: str = Field(..., min_length=6, max_length=100)
+    confirm_password: str = Field(..., min_length=6, max_length=100)
+    code: str = Field(..., min_length=6, max_length=6, description="邮箱验证码")
     username: Optional[str] = Field(None, min_length=2, max_length=50, description="用户名（可选，留空自动生成）")
+
+
+class SendCodeRequest(BaseModel):
+    email: str = Field(..., description="邮箱地址", pattern=r"^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$")
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: str = Field(..., description="邮箱地址", pattern=r"^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$")
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str = Field(..., description="重置密码 token")
+    new_password: str = Field(..., min_length=6, max_length=100)
+
 
 class LoginRequest(BaseModel):
     email: str = Field(..., description="邮箱地址")

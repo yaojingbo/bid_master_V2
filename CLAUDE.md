@@ -62,6 +62,7 @@ Bid Master Web：招投标智能分析工具箱
 ## 自动化
 
 - 使用 Makefile targets，不创建 shell 脚本
+- 代码修改完成后，自动重启前后端服务（kill 端口 8000/3000 进程后重新启动）
 
 ## 文档
 

@@ -144,6 +144,7 @@ export default function StatisticsPage() {
   } | null>(null);
   const [aiContent, setAiContent] = useState("");
   const [aiStreaming, setAiStreaming] = useState(false);
+  const [analysisTaskId, setAnalysisTaskId] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -170,7 +171,7 @@ export default function StatisticsPage() {
   // 同步状态到 taskStore（防抖，避免高频 localStorage 写入）
   const statSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
-    if (result || aiContent || aiStreaming || uploadedFile) {
+    if (result || aiContent || aiStreaming || uploadedFile || analysisTaskId) {
       if (statSyncTimerRef.current) clearTimeout(statSyncTimerRef.current);
       statSyncTimerRef.current = setTimeout(() => {
         useTaskStore.getState().updateStatistics({
@@ -178,13 +179,14 @@ export default function StatisticsPage() {
           aiContent,
           aiStreaming,
           uploadedFile,
+          analysisTaskId,
         });
       }, 200);
     }
     return () => {
       if (statSyncTimerRef.current) clearTimeout(statSyncTimerRef.current);
     };
-  }, [result, aiContent, aiStreaming, uploadedFile]);
+  }, [result, aiContent, aiStreaming, uploadedFile, analysisTaskId]);
 
   // 页面挂载时：恢复上次的分析结果和 AI 内容
   useEffect(() => {
@@ -195,19 +197,67 @@ export default function StatisticsPage() {
     if (saved.uploadedFile) setUploadedFile(saved.uploadedFile);
     if (saved.aiContent) setAiContent(saved.aiContent);
 
-    // 如果之前 AI 分析正在进行，切换到非流式状态
-    //（SSE 连接已在页面切换时断开，无法恢复）
-    if (saved.aiStreaming) {
-      setAiStreaming(false);
+    // 如果之前 AI 分析正在进行且有 taskId，启动轮询恢复
+    if (saved.aiStreaming && saved.analysisTaskId) {
+      setAnalysisTaskId(saved.analysisTaskId);
+      setAiStreaming(true);
+      setActiveTab("comprehensive");
+      pollAnalysisTask(saved.analysisTaskId);
     } else {
       setAiStreaming(false);
+      if (saved.result) {
+        const firstModule = saved.result.requested_modules?.[0];
+        if (firstModule) setActiveTab(firstModule);
+      }
     }
 
-    // 如果有分析结果，切换到第一个非综合 Tab
-    if (saved.result) {
-      const firstModule = saved.result.requested_modules?.[0];
-      if (firstModule) setActiveTab(firstModule);
+    // 如果已有 AI 内容（分析已完成），切到综合分析 tab
+    if (saved.aiContent && !saved.aiStreaming) {
+      setActiveTab("comprehensive");
     }
+  }, []);
+
+  const pollAnalysisTask = useCallback((taskId: string) => {
+    let attempts = 0;
+    const maxAttempts = 100; // 3s * 100 = 5 min
+    const interval = setInterval(async () => {
+      attempts++;
+      if (attempts > maxAttempts) {
+        clearInterval(interval);
+        setAiStreaming(false);
+        setAiContent((prev) => prev + "\n⏱ 轮询超时，请重新执行分析\n");
+        setAnalysisTaskId(null);
+        return;
+      }
+      try {
+        const res = await authFetch(`/api/statistics/analysis-task/${taskId}`);
+        if (!res.ok) {
+          clearInterval(interval);
+          setAiStreaming(false);
+          setAnalysisTaskId(null);
+          return;
+        }
+        const json = await res.json();
+        const record = json.data;
+        if (record.status === "completed") {
+          clearInterval(interval);
+          setAiContent(record.ai_analysis || "");
+          setAiStreaming(false);
+          setAnalysisTaskId(null);
+        } else if (record.status === "error") {
+          clearInterval(interval);
+          const errMsg = record.ai_analysis || "分析出错，请重试";
+          setAiContent(errMsg);
+          setAiStreaming(false);
+          setAnalysisTaskId(null);
+        }
+        // status === "running" or "partial" → continue polling
+      } catch {
+        // network error, keep polling
+      }
+    }, 3000);
+
+    return () => clearInterval(interval);
   }, []);
 
   const { upload } = useFileUpload();
@@ -449,68 +499,58 @@ export default function StatisticsPage() {
 
   const handleComprehensive = async () => {
     if (!result || !uploadedFile) return;
+
     setAiContent("");
     setAiStreaming(true);
-    abortRef.current = new AbortController();
+    setActiveTab("comprehensive");
 
     try {
-      // 使用 upload 版本，直接上传文件而不是依赖 fileId
+      let res: Response;
       const file = uploadedFileRef.current;
-      const formData = new FormData();
-      if (file) formData.append("file", file);
-      formData.append("modules", JSON.stringify(selectedModules));
-      formData.append("provider", activeProvider);
-      formData.append("model", activeModel);
 
-      const res = await authFetch("/api/statistics/analyze/comprehensive/upload", {
-        method: "POST",
-        body: formData,
-        signal: abortRef.current.signal,
-      });
+      if (file) {
+        const formData = new FormData();
+        formData.append("file", file);
+        formData.append("modules", JSON.stringify(selectedModules));
+        formData.append("provider", activeProvider);
+        formData.append("model", activeModel);
+        res = await authFetch("/api/statistics/analyze/comprehensive/upload/start", {
+          method: "POST",
+          body: formData,
+        });
+      } else {
+        res = await authFetch("/api/statistics/analyze/comprehensive/start", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            fileId: uploadedFile.id,
+            modules: selectedModules,
+            provider: activeProvider,
+            model: activeModel,
+          }),
+        });
+      }
 
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      if (!res.body) throw new Error("无响应体");
+      const data = await res.json();
+      const taskId = data.task_id;
 
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
+      setAnalysisTaskId(taskId);
+      // 立即持久化，确保切走后能恢复
+      useTaskStore.getState().updateStatistics({
+        result,
+        aiContent: "",
+        aiStreaming: true,
+        uploadedFile,
+        analysisTaskId: taskId,
+      });
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || "";
-
-        for (const line of lines) {
-          if (line.startsWith("data: ")) {
-            try {
-              const event = JSON.parse(line.slice(6));
-              if (event.type === "content") {
-                setAiContent((prev) => prev + event.content);
-              } else if (event.type === "progress") {
-                setAiContent((prev) => prev + event.message + "\n");
-              } else if (event.type === "done") {
-                setAiContent((prev) =>
-                  prev + `\n✅ ${event.data?.summary || "分析完成"}\n`
-                );
-              }
-            } catch {
-              // skip
-            }
-          }
-        }
-      }
-      setAiStreaming(false);
+      // 启动轮询
+      pollAnalysisTask(taskId);
     } catch (err) {
-      if (err instanceof DOMException && err.name === "AbortError") {
-        setAiContent((prev) => prev + "\n⏹ 已停止分析\n");
-      } else {
-        setAiContent((prev) =>
-          prev + `\n❌ 失败: ${err instanceof Error ? err.message : "未知错误"}\n`
-        );
-      }
+      setAiContent(
+        `失败: ${err instanceof Error ? err.message : "未知错误"}\n`
+      );
       setAiStreaming(false);
     }
   };
@@ -596,9 +636,9 @@ export default function StatisticsPage() {
             </div>
           </div>
           <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
-            {rawHeaders.map((header) => (
+            {rawHeaders.map((header, idx) => (
               <label
-                key={header}
+                key={`${header}-${idx}`}
                 className="flex items-center gap-2 p-2.5 rounded-lg hover:bg-muted/50 cursor-pointer text-sm border border-transparent hover:border-border transition-colors"
               >
                 <input
@@ -1141,7 +1181,7 @@ export default function StatisticsPage() {
                   <TaskProgress
                     phases={statisticsPhases}
                     currentPhase="analyzing"
-                    message="AI 正在分析中..."
+                    message={`AI 正在分析中（${activeProvider}/${activeModel || "default"}）...`}
                     isActive={aiStreaming}
                     isDone={false}
                     showStop

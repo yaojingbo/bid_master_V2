@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
-  FileSearch, BarChart3, Database, Settings, FileText, LayoutDashboard, Sparkles, LogOut, LogIn, UserPlus, User,
+  FileSearch, BarChart3, Database, Settings, FileText, LayoutDashboard, Sparkles, LogOut, LogIn, UserPlus, User, ScrollText,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/stores/auth-store";
@@ -54,6 +54,21 @@ export function Sidebar() {
       </nav>
 
       {/* Footer */}
+      <div className="px-5 py-2 border-t border-border">
+        <Link
+          href="/logs"
+          title="系统日志"
+          className={cn(
+            "flex items-center gap-2 px-2 py-1.5 rounded text-xs transition-colors",
+            pathname === "/logs"
+              ? "text-primary"
+              : "text-muted-foreground hover:text-foreground hover:bg-muted"
+          )}
+        >
+          <ScrollText className="h-3.5 w-3.5" />
+          <span>系统日志</span>
+        </Link>
+      </div>
       <div className="px-5 py-4 border-t border-border">
         {isLoading ? (
           <p className="text-xs text-muted-foreground">加载中...</p>

@@ -10,11 +10,24 @@ interface Provider {
   models: string[];
 }
 
+const DEFAULT_MODELS: Record<string, string> = {
+  deepseek: "deepseek-chat",
+  dashscope: "qwen-turbo",
+  zhipu: "glm-4-flash",
+  minimax: "MiniMax-M2.7",
+  openai: "gpt-4o",
+  claude: "claude-sonnet-4-20250514",
+  ollama: "llama3",
+};
+
 interface SettingsState {
   // Providers
   providers: Provider[];
   activeProvider: string;
+  /** current active provider's model (derived, kept in sync for backward compat) */
   activeModel: string;
+  /** per-provider model config, keyed by provider id */
+  activeModels: Record<string, string>;
 
   // Connection status
   isTesting: boolean;
@@ -27,20 +40,10 @@ interface SettingsState {
   // Actions
   setProviders: (providers: Provider[]) => void;
   setActiveProvider: (providerId: string) => void;
-  setActiveModel: (model: string) => void;
+  setProviderModel: (providerId: string, model: string) => void;
   setTesting: (isTesting: boolean) => void;
   setTestResult: (result: SettingsState["lastTestResult"]) => void;
 }
-
-const DEFAULT_MODELS: Record<string, string> = {
-  deepseek: "deepseek-chat",
-  dashscope: "qwen-turbo",
-  zhipu: "glm-4-flash",
-  minimax: "MiniMax-M2.7",
-  openai: "gpt-4o",
-  claude: "claude-sonnet-4-6",
-  ollama: "llama3",
-};
 
 export const useSettingsStore = create<SettingsState>()(
   persist(
@@ -48,22 +51,26 @@ export const useSettingsStore = create<SettingsState>()(
       providers: [],
       activeProvider: "deepseek",
       activeModel: DEFAULT_MODELS["deepseek"],
+      activeModels: { ...DEFAULT_MODELS },
       isTesting: false,
       lastTestResult: null,
 
       setProviders: (providers) => set(() => ({ providers })),
 
       setActiveProvider: (providerId) => {
-        const providers = get().providers;
-        const provider = providers.find((p) => p.id === providerId);
-        const defaultModel = DEFAULT_MODELS[providerId] || provider?.models[0] || "";
+        const model = get().activeModels[providerId] || DEFAULT_MODELS[providerId] || "";
         set(() => ({
           activeProvider: providerId,
-          activeModel: defaultModel,
+          activeModel: model,
         }));
       },
 
-      setActiveModel: (model) => set(() => ({ activeModel: model })),
+      setProviderModel: (providerId, model) => {
+        set((state) => ({
+          activeModels: { ...state.activeModels, [providerId]: model },
+          activeModel: state.activeProvider === providerId ? model : state.activeModel,
+        }));
+      },
 
       setTesting: (isTesting) => set(() => ({ isTesting })),
 
@@ -74,6 +81,11 @@ export const useSettingsStore = create<SettingsState>()(
     }),
     {
       name: "bid-master-settings-store",
+      partialize: (state) => ({
+        activeProvider: state.activeProvider,
+        activeModel: state.activeModel,
+        activeModels: state.activeModels,
+      }),
     }
   )
 );

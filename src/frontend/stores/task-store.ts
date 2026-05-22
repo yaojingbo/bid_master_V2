@@ -68,6 +68,7 @@ interface StatisticsTaskState {
   aiContent: string;
   aiStreaming: boolean;
   uploadedFile: { id: string; name: string } | null;
+  analysisTaskId: string | null;
 }
 
 interface TaskStore {

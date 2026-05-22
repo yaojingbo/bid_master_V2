@@ -38,7 +38,10 @@ export const useFileStore = create<FileState>()(
       uploadProgress: 0,
 
       addFile: (file) => set((state) => ({
-        files: [...state.files, file],
+        // 避免重复添加相同 ID 的文件
+        files: state.files.some((f) => f.id === file.id)
+          ? state.files
+          : [...state.files, file],
       })),
 
       removeFile: (id) => set((state) => ({

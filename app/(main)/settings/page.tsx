@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { getApiKeys, saveApiKey, deleteApiKey, type ApiKeyItem } from "@/lib/api-keys";
 import { authFetch } from "@/lib/auth-fetch";
+import { useSettingsStore } from "@/stores/settings-store";
 
 interface Provider {
   id: string;
@@ -22,8 +23,15 @@ interface TestResult {
 
 export default function SettingsPage() {
   const [providers, setProviders] = useState<Provider[]>([]);
-  const [activeProvider, setActiveProvider] = useState("deepseek");
+  const storeActiveProvider = useSettingsStore((s) => s.activeProvider);
+  const setStoreActiveProvider = useSettingsStore((s) => s.setActiveProvider);
+  const [activeProvider, setActiveProviderLocal] = useState(storeActiveProvider);
   const [loading, setLoading] = useState(true);
+
+  const setActiveProvider = useCallback((id: string) => {
+    setActiveProviderLocal(id);
+    setStoreActiveProvider(id);
+  }, [setStoreActiveProvider]);
 
   // 测试连接
   const [testingProvider, setTestingProvider] = useState<string | null>(null);
@@ -48,6 +56,12 @@ export default function SettingsPage() {
   } | null>(null);
   const [savedKeys, setSavedKeys] = useState<ApiKeyItem[]>([]);
 
+  // 型号管理
+  const activeModel = useSettingsStore((s) => s.activeModel);
+  const activeModels = useSettingsStore((s) => s.activeModels);
+  const setProviderModel = useSettingsStore((s) => s.setProviderModel);
+  const [modelValues, setModelValues] = useState<Record<string, string>>({});
+
   const loadProviders = useCallback(async () => {
     setLoading(true);
     try {
@@ -55,7 +69,6 @@ export default function SettingsPage() {
       const data = await res.json();
       if (data.success && data.data) {
         setProviders(data.data.providers);
-        setActiveProvider(data.data.active);
       }
     } catch (err) {
       console.error("加载供应商列表失败:", err);
@@ -86,7 +99,11 @@ export default function SettingsPage() {
       const res = await authFetch("/api/settings/test", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ provider: providerId }),
+        body: JSON.stringify({
+          provider: providerId,
+          model: activeModels[providerId],
+          apiKey: apiKeyValues[providerId]?.trim() || undefined,
+        }),
       });
       const data = await res.json();
       setTestResult({
@@ -134,7 +151,7 @@ export default function SettingsPage() {
     }
   };
 
-  // 保存 API Key
+  // 保存 API Key（保存前验证连接）
   const handleSaveKey = async (providerId: string) => {
     const key = apiKeyValues[providerId]?.trim();
     if (!key) {
@@ -143,7 +160,29 @@ export default function SettingsPage() {
     }
     setSavingProvider(providerId);
     setApiKeyResult(null);
+
     try {
+      const testRes = await authFetch("/api/settings/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ provider: providerId, model: activeModels[providerId], apiKey: key }),
+      });
+      const testData = await testRes.json();
+      if (!testData.success) {
+        setApiKeyResult({
+          provider: providerId,
+          success: false,
+          message: `API Key 验证失败: ${testData.error || "无法连接"}，请检查 Key 是否正确`,
+        });
+        return;
+      }
+
+      const model = modelValues[providerId]?.trim();
+      if (model) {
+        setProviderModel(providerId, model);
+        setModelValues((prev) => ({ ...prev, [providerId]: "" }));
+      }
+
       await saveApiKey(providerId, key);
       setApiKeyValues((prev) => ({ ...prev, [providerId]: "" }));
       setApiKeyResult({ provider: providerId, success: true, message: "API Key 已保存" });
@@ -207,6 +246,9 @@ export default function SettingsPage() {
             <p className="text-sm text-muted-foreground">当前供应商</p>
             <p className="text-2xl font-bold">
               {providers.find((p) => p.id === activeProvider)?.name || "未选择"}
+            </p>
+            <p className="text-sm text-muted-foreground mt-1">
+              型号: {activeModel || "默认"}
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -335,7 +377,7 @@ export default function SettingsPage() {
           API Key 管理
         </h2>
         <p className="text-sm text-muted-foreground mb-4">
-          为各 LLM 供应商配置 API Key，加密存储，优先于环境变量使用
+          为各 LLM 供应商配置型号和 API Key，加密存储，优先于环境变量使用
         </p>
 
         {apiKeyResult && (
@@ -370,6 +412,19 @@ export default function SettingsPage() {
                   {!isKeySaved(provider.id) && (
                     <p className="text-xs text-muted-foreground">未配置</p>
                   )}
+                </div>
+
+                {/* 型号输入框 */}
+                <div className="w-40 shrink-0">
+                  <input
+                    type="text"
+                    value={modelValues[provider.id] ?? ""}
+                    onChange={(e) =>
+                      setModelValues((prev) => ({ ...prev, [provider.id]: e.target.value }))
+                    }
+                    placeholder={activeModels[provider.id] || "默认型号"}
+                    className="w-full px-3 py-2 text-sm border border-border rounded bg-background focus:outline-none focus:ring-2 focus:ring-primary/20"
+                  />
                 </div>
 
                 {/* Key 输入框 */}

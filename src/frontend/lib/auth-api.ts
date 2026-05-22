@@ -31,16 +31,55 @@ export async function authLogin(email: string, password: string): Promise<LoginR
   return res.json();
 }
 
-export async function authRegister(email: string, password: string, username?: string): Promise<LoginResponse> {
+export async function authRegister(email: string, password: string, confirmPassword: string, code: string, username?: string): Promise<LoginResponse> {
   const res = await fetch(`${API_BASE}/api/auth/register`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email, password, username }),
+    body: JSON.stringify({ email, password, confirm_password: confirmPassword, code, username }),
     credentials: "include",
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(err.detail || `注册失败: HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function authSendCode(email: string): Promise<{ success: boolean; message: string }> {
+  const res = await fetch(`${API_BASE}/api/auth/send-code`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || `发送验证码失败: HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function authForgotPassword(email: string): Promise<{ success: boolean; message: string }> {
+  const res = await fetch(`${API_BASE}/api/auth/forgot-password`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || `操作失败: HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function authResetPassword(token: string, newPassword: string): Promise<{ success: boolean; message: string }> {
+  const res = await fetch(`${API_BASE}/api/auth/reset-password`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token, new_password: newPassword }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || `重置密码失败: HTTP ${res.status}`);
   }
   return res.json();
 }

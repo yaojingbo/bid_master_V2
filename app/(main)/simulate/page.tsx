@@ -12,14 +12,17 @@ import {
   ChevronDown,
   ChevronUp,
   RefreshCw,
+  Sparkles,
+  Trash2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { authFetch } from "@/lib/auth-fetch";
+import { authFetch, authFetchSSE } from "@/lib/auth-fetch";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { TaskProgress } from "@/components/ui/TaskProgress";
 import { useFileUpload } from "@/hooks/useFileUpload";
 import { useFileStore } from "@/stores/file-store";
 import { useTaskStore } from "@/stores/task-store";
+import { useSettingsStore } from "@/stores/settings-store";
 
 // 4 步流程定义
 const steps = [
@@ -29,11 +32,19 @@ const steps = [
   { key: 4, label: "模拟编制", desc: "生成模拟投标文件" },
 ];
 
+// 模拟编制 SSE 阶段定义
 const simulatePhases = [
-  { key: "connecting", label: "连接服务" },
-  { key: "processing", label: "处理中" },
-  { key: "generating", label: "AI 生成" },
-  { key: "completing", label: "完成" },
+  { key: "connecting", label: "连接服务", icon: Loader2 },
+  { key: "reading", label: "读取文档", icon: FileText },
+  { key: "analyzing", label: "AI 分析", icon: Sparkles },
+  { key: "generating", label: "生成结果", icon: CheckCircle },
+  { key: "completing", label: "完成", icon: CheckCircle },
+];
+
+// Step 1 PDF转换阶段定义
+const step1Phases = [
+  { key: "converting", label: "文件转换中", icon: Loader2 },
+  { key: "completed", label: "完成", icon: CheckCircle },
 ];
 
 const projectTypes = [
@@ -55,6 +66,7 @@ interface TaskData {
 }
 
 export default function SimulatePage() {
+  const { activeProvider, activeModel } = useSettingsStore();
   const [task, setTask] = useState<TaskData | null>(null);
   const [uploadingFile, setUploadingFile] = useState<string | null>(null);
   const [runningStep, setRunningStep] = useState<number | null>(null);
@@ -107,64 +119,88 @@ export default function SimulatePage() {
     const saved = useTaskStore.getState().simulate;
     if (!saved) return;
 
-    // 恢复任务和流式状态
-    setTask(saved.task);
-    setStreamContent(saved.streamContent);
-    setIsStreaming(saved.isStreaming);
-    setRunningStep(saved.runningStep);
-
-    // 如果有 streamContent，展开对应步骤
-    if (saved.streamContent && saved.runningStep) {
-      setCollapsed((prev) => ({ ...prev, [saved.runningStep!]: false }));
+    // 如果没有 task，说明是残留数据，直接清除
+    if (!saved.task) {
+      useTaskStore.getState().clearSimulate();
+      return;
     }
 
-    // 如果之前正在处理中 → 刷新后端状态检查步骤是否已完成
-    if (saved.isStreaming && saved.task?.taskId) {
-      const timer = setTimeout(async () => {
-        try {
-          const res = await authFetch(`/api/simulate/${saved.task!.taskId}`);
-          const data = await res.json();
-          if (data.success && data.data) {
-            const t = data.data;
-            // 检查是否有新的步骤结果（表示步骤已完成）
-            const stepResults = [
-              { step: 1, result: t.step1Result },
-              { step: 2, result: t.step2Result },
-              { step: 3, result: t.step3Result },
-              { step: 4, result: t.step4Result },
-            ];
-            const completedStep = stepResults.find(
-              (s) => s.step === saved.runningStep && s.result
-            );
-            if (completedStep) {
-              setStreamContent((prev) =>
-                prev + `\n✅ 步骤 ${completedStep.step} 已在后台完成\n`
-              );
-              setIsStreaming(false);
-              setRunningStep(null);
-              setTask({
-                taskId: t.taskId,
-                currentStep: t.currentStep,
-                status: t.status,
-                fileIds: t.fileIds,
-                params: t.params || {},
-                step1Result: t.step1Result || "",
-                step2Result: t.step2Result || "",
-                step3Result: t.step3Result || "",
-                step4Result: t.step4Result || "",
-              });
-            }
-          }
-        } catch {
-          // 静默失败，只是恢复检查
+    // 验证任务是否属于当前用户（避免跨用户残留数据）
+    authFetch(`/api/simulate/${saved.task.taskId}`)
+      .then((res) => res.json())
+      .then((data) => {
+        if (!data.success || !data.data) {
+          // 任务不存在或不属于当前用户，清除残留数据
+          useTaskStore.getState().clearSimulate();
+          return;
         }
-      }, 1500);
-      return () => clearTimeout(timer);
-    }
+        // 恢复任务和流式状态
+        setTask(data.data);
+        setStreamContent(saved.streamContent || "");
+        setIsStreaming(saved.isStreaming || false);
+        setRunningStep(saved.runningStep || null);
+
+        // 如果有 streamContent，展开对应步骤
+        if (saved.streamContent && saved.runningStep) {
+          setCollapsed((prev) => ({ ...prev, [saved.runningStep!]: false }));
+        }
+
+        // 如果之前正在处理中 → 轮询后端检查步骤是否已完成
+        if (saved.isStreaming && saved.runningStep) {
+          let retryCount = 0;
+          const maxRetries = 30;
+          const poll = () => {
+            authFetch(`/api/simulate/${saved.task!.taskId}`)
+              .then((r) => r.json())
+              .then((t) => {
+                if (t.success && t.data) {
+                  const stepResults = [
+                    { step: 1, result: t.data.step1Result },
+                    { step: 2, result: t.data.step2Result },
+                    { step: 3, result: t.data.step3Result },
+                    { step: 4, result: t.data.step4Result },
+                  ];
+                  const completed = stepResults.find(
+                    (s) => s.step === saved.runningStep && s.result
+                  );
+                  if (completed) {
+                    setStreamContent((prev) =>
+                      prev + `\n✅ 步骤 ${completed.step} 已在后台完成\n`
+                    );
+                    setIsStreaming(false);
+                    setRunningStep(null);
+                    setTask(t.data);
+                    useTaskStore.getState().clearSimulate();
+                    return;
+                  }
+                }
+                retryCount++;
+                if (retryCount < maxRetries) setTimeout(poll, 1000);
+              })
+              .catch(() => {
+                retryCount++;
+                if (retryCount < maxRetries) setTimeout(poll, 1000);
+              });
+          };
+          setTimeout(poll, 2000);
+        }
+      })
+      .catch(() => {
+        // API 失败，清除残留数据
+        useTaskStore.getState().clearSimulate();
+      });
   }, []);
 
   const { upload } = useFileUpload();
-  const { files } = useFileStore();
+  const { files, removeFile } = useFileStore();
+  const [selectedFileIds, setSelectedFileIds] = useState<Set<string>>(new Set());
+
+  // 页面加载时默认全选
+  useEffect(() => {
+    if (files.length > 0 && selectedFileIds.size === 0) {
+      setSelectedFileIds(new Set(files.map((f) => f.id)));
+    }
+  }, [files.length]);
 
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -172,6 +208,12 @@ export default function SimulatePage() {
     setUploadingFile(file.name);
     await upload(file);
     setUploadingFile(null);
+    // 新上传的文件自动勾选（取 store 最新状态）
+    const latest = useFileStore.getState().files;
+    const newFile = latest[latest.length - 1];
+    if (newFile) {
+      setSelectedFileIds((prev) => new Set([...prev, newFile.id]));
+    }
   };
 
   const handleDragOver = (e: React.DragEvent) => {
@@ -192,11 +234,16 @@ export default function SimulatePage() {
     setUploadingFile(file.name);
     await upload(file);
     setUploadingFile(null);
+    const latest = useFileStore.getState().files;
+    const newFile = latest[latest.length - 1];
+    if (newFile) {
+      setSelectedFileIds((prev) => new Set([...prev, newFile.id]));
+    }
   };
 
   const handleCreateTask = async () => {
-    // Use uploaded file IDs or mock IDs
-    const fileIds = files.length > 0 ? files.map((f) => f.id) : ["mock-file-1"];
+    const fileIds = [...selectedFileIds];
+    if (fileIds.length === 0) return;
 
     try {
       const res = await authFetch("/api/simulate/create", {
@@ -233,10 +280,10 @@ export default function SimulatePage() {
     abortRef.current = new AbortController();
 
     try {
-      const res = await authFetch(`/api/simulate/${task.taskId}/step/${stepNum}`, {
+      const res = await authFetchSSE(`/api/simulate/${task.taskId}/step/${stepNum}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body || {}),
+        body: JSON.stringify({ provider: activeProvider, model: activeModel, ...body }),
         signal: abortRef.current.signal,
       });
 
@@ -278,9 +325,10 @@ export default function SimulatePage() {
                 if (event.phase) setSimPhase(event.phase as string);
                 if (event.percentage != null) setSimPercentage(event.percentage as number);
 
-                if (event.type === "progress") {
-                  if (!event.phase) setSimPhase("processing");
-                  setStreamContent((prev) => prev + event.message + "\n");
+                if (event.type === "progress" || event.type === "llm_progress") {
+                  if (event.phase) setSimPhase(event.phase as string);
+                  if (event.percentage != null) setSimPercentage(event.percentage as number);
+                  if (event.message) setStreamContent((prev) => prev + event.message + "\n");
                 } else if (event.type === "content") {
                   if (!simPhase) setSimPhase("generating");
                   setStreamContent((prev) => prev + event.content);
@@ -380,9 +428,25 @@ export default function SimulatePage() {
     return task.currentStep >= step - 1;
   };
 
+  const handleClearTask = async () => {
+    if (!task) return;
+    try {
+      await authFetch(`/api/simulate/${task.taskId}`, { method: "DELETE" });
+    } catch {
+      // ignore API errors
+    }
+    setTask(null);
+    setStreamContent("");
+    setIsStreaming(false);
+    setRunningStep(null);
+    setSimPhase(null);
+    setSimPercentage(null);
+    useTaskStore.getState().clearSimulate();
+  };
+
   return (
     <div className="max-w-4xl mx-auto space-y-6">
-      <PageHeader title="模拟编制" description="四步引导式生成模拟投标文件" />
+      <PageHeader title="模拟编制" description="四步引导式生成模拟招标文件" />
 
       {/* 创建任务区域 */}
       {!task && (
@@ -418,20 +482,79 @@ export default function SimulatePage() {
                 上传中: {uploadingFile}
               </p>
             )}
-            {files.length > 0 && (
-              <p className="mt-3 text-sm text-success flex items-center gap-1">
-                <CheckCircle className="h-4 w-4" />
-                已上传 {files.length} 个文件
-              </p>
-            )}
           </label>
+
+          {/* 文件选择列表 */}
+          {files.length > 0 && (
+            <div className="rounded-xl border border-border overflow-hidden">
+              <div className="p-3 border-b bg-muted/50 flex items-center justify-between">
+                <span className="text-sm font-medium">
+                  参考文档 ({selectedFileIds.size}/{files.length})
+                </span>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setSelectedFileIds(new Set(files.map((f) => f.id)))}
+                    className="text-xs text-primary hover:underline"
+                  >
+                    全选
+                  </button>
+                  <button
+                    onClick={() => setSelectedFileIds(new Set())}
+                    className="text-xs text-muted-foreground hover:underline"
+                  >
+                    取消全选
+                  </button>
+                </div>
+              </div>
+              <div className="divide-y max-h-[240px] overflow-auto">
+                {files.map((file) => (
+                  <div key={file.id} className="px-3 py-2 flex items-center gap-3 hover:bg-muted/30">
+                    <input
+                      type="checkbox"
+                      checked={selectedFileIds.has(file.id)}
+                      onChange={(e) => {
+                        setSelectedFileIds((prev) => {
+                          const next = new Set(prev);
+                          if (e.target.checked) next.add(file.id);
+                          else next.delete(file.id);
+                          return next;
+                        });
+                      }}
+                      className="h-4 w-4 rounded border-border"
+                    />
+                    <FileText className="h-4 w-4 text-muted-foreground shrink-0" />
+                    <span className="text-sm truncate flex-1">{file.name}</span>
+                    <span className="text-xs text-muted-foreground shrink-0">
+                      {file.size < 1024 * 1024
+                        ? `${(file.size / 1024).toFixed(0)}KB`
+                        : `${(file.size / 1024 / 1024).toFixed(1)}MB`}
+                    </span>
+                    <button
+                      onClick={() => {
+                        removeFile(file.id);
+                        setSelectedFileIds((prev) => {
+                          const next = new Set(prev);
+                          next.delete(file.id);
+                          return next;
+                        });
+                      }}
+                      className="p-1 text-muted-foreground hover:text-destructive rounded"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           <button
             onClick={handleCreateTask}
-            className="w-full py-3 bg-primary text-primary-foreground rounded-lg font-medium hover:bg-primary/90 flex items-center justify-center gap-2"
+            disabled={selectedFileIds.size === 0}
+            className="w-full py-3 bg-primary text-primary-foreground rounded-lg font-medium hover:bg-primary/90 disabled:opacity-50 flex items-center justify-center gap-2"
           >
             <Plus className="h-5 w-5" />
-            创建模拟任务
+            创建模拟任务{selectedFileIds.size > 0 ? `（已选 ${selectedFileIds.size} 个文件）` : ""}
           </button>
         </>
       )}
@@ -441,10 +564,42 @@ export default function SimulatePage() {
         <div className="rounded-xl border border-border p-6">
           <div className="flex items-center justify-between mb-2">
             <p className="text-sm text-muted-foreground">任务: {task.taskId}</p>
-            <span className="px-3 py-1 bg-primary/10 text-primary rounded text-sm">
-              当前: 步骤 {task.currentStep}
-            </span>
+            <div className="flex items-center gap-2">
+              <span className="px-3 py-1 bg-primary/10 text-primary rounded text-sm">
+                当前: 步骤 {task.currentStep}
+              </span>
+              {isStreaming ? (
+                <button
+                  onClick={handleStop}
+                  className="px-2 py-1 text-xs border border-destructive text-destructive rounded hover:bg-destructive/10 transition-colors"
+                >
+                  取消任务
+                </button>
+              ) : (
+                <button
+                  onClick={handleClearTask}
+                  className="px-2 py-1 text-xs border border-border rounded hover:bg-muted transition-colors"
+                >
+                  重置任务
+                </button>
+              )}
+            </div>
           </div>
+          {/* 执行中显示进度条 */}
+          {isStreaming && runningStep && (
+            <div className="mb-3">
+              <TaskProgress
+                phases={runningStep === 1 ? step1Phases : simulatePhases}
+                currentPhase={runningStep === 1 ? "converting" : simPhase}
+                percentage={simPercentage}
+                message={runningStep === 1 ? "正在转换文件..." : `AI 执行中（${activeProvider}/${activeModel || "default"}）...`}
+                isActive={isStreaming}
+                isDone={false}
+                showStop
+                onStop={handleStop}
+              />
+            </div>
+          )}
           <div className="flex items-center gap-2">
             {steps.map((step, i) => (
               <div key={step.key} className="flex items-center gap-2">
@@ -483,16 +638,26 @@ export default function SimulatePage() {
               <p className="text-sm text-muted-foreground mb-3">
                 将上传的招标文件转换为可处理的文本格式
               </p>
-              <button
-                onClick={() => streamStep(1)}
-                disabled={isStreaming}
-                className="px-4 py-2 bg-primary text-primary-foreground rounded font-medium hover:bg-primary/90 disabled:opacity-50 flex items-center gap-2"
-              >
-                {runningStep === 1 ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : null}
-                开始转换
-              </button>
+              {isStreaming && runningStep === 1 ? (
+                <TaskProgress
+                  phases={step1Phases}
+                  currentPhase="converting"
+                  percentage={simPercentage}
+                  message="正在转换文件..."
+                  isActive={isStreaming}
+                  isDone={false}
+                  showStop
+                  onStop={handleStop}
+                />
+              ) : (
+                <button
+                  onClick={() => streamStep(1)}
+                  disabled={isStreaming}
+                  className="px-4 py-2 bg-primary text-primary-foreground rounded font-medium hover:bg-primary/90 disabled:opacity-50 flex items-center gap-2"
+                >
+                  开始转换
+                </button>
+              )}
               {task.step1Result && (
                 <p className="mt-2 text-sm text-success flex items-center gap-1">
                   <CheckCircle className="h-4 w-4" /> 转换完成
@@ -527,7 +692,7 @@ export default function SimulatePage() {
                       phases={simulatePhases}
                       currentPhase={simPhase}
                       percentage={simPercentage}
-                      message="AI 正在提取要素..."
+                      message={`AI 正在提取要素（${activeProvider}/${activeModel || "default"}）...`}
                       isActive={isStreaming}
                       isDone={!isStreaming && !!streamContent}
                       showStop
@@ -594,13 +759,22 @@ export default function SimulatePage() {
               </button>
 
               {(isStreaming && runningStep === 3) || streamContent && runningStep === 3 ? (
-                <div className="mt-3 rounded-xl border border-border p-3 max-h-[300px] overflow-auto">
-                  <pre className="whitespace-pre-wrap text-sm">{streamContent}</pre>
+                <div className="mt-3 space-y-2">
                   {isStreaming && (
-                    <button onClick={handleStop} className="mt-2 px-3 py-1 border rounded text-sm">
-                      停止
-                    </button>
+                    <TaskProgress
+                      phases={simulatePhases}
+                      currentPhase={simPhase}
+                      percentage={simPercentage}
+                      message={`AI 正在对比分析（${activeProvider}/${activeModel || "default"}）...`}
+                      isActive={isStreaming}
+                      isDone={!isStreaming && !!streamContent}
+                      showStop
+                      onStop={handleStop}
+                    />
                   )}
+                  <div className="rounded-xl border border-border p-3 max-h-[300px] overflow-auto">
+                    <pre className="whitespace-pre-wrap text-sm">{streamContent}</pre>
+                  </div>
                 </div>
               ) : null}
 
@@ -728,7 +902,7 @@ export default function SimulatePage() {
                       phases={simulatePhases}
                       currentPhase={simPhase}
                       percentage={simPercentage}
-                      message="AI 正在生成模拟投标文件..."
+                      message={`AI 正在生成模拟投标文件（${activeProvider}/${activeModel || "default"}）...`}
                       isActive={isStreaming}
                       isDone={!isStreaming && !!streamContent}
                       showStop

@@ -79,14 +79,19 @@ export function TaskProgress({
 
       {/* 进度条 */}
       {isActive && (
-        <div className="w-full h-1.5 bg-gray-100 rounded-full overflow-hidden">
-          {percentage != null ? (
-            <div
-              className="h-full bg-blue-500 rounded-full transition-all duration-300"
-              style={{ width: `${Math.min(percentage, 100)}%` }}
-            />
-          ) : (
-            <div className="h-full bg-blue-500 rounded-full animate-progress-indeterminate" />
+        <div className="flex items-center gap-2">
+          <div className="flex-1 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+            {percentage != null ? (
+              <div
+                className="h-full bg-blue-500 rounded-full transition-all duration-300"
+                style={{ width: `${Math.min(percentage, 100)}%` }}
+              />
+            ) : (
+              <div className="h-full bg-blue-500 rounded-full animate-progress-indeterminate" />
+            )}
+          </div>
+          {percentage != null && (
+            <span className="text-xs text-gray-500 tabular-nums w-8 text-right">{Math.round(percentage)}%</span>
           )}
         </div>
       )}

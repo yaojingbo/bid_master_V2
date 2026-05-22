@@ -33,18 +33,20 @@ class LLMService:
         # Calculate statistics server-side
         return StatisticsService.calculate_price_statistics(prices)
 
-    async def test_connection(self, provider: str, user_id: str = None) -> dict:
+    async def test_connection(self, provider: str, user_id: str = None, model: str = None, api_key: str = None) -> dict:
         """
         Test connection to a provider.
 
         Args:
             provider: Provider name
             user_id: Optional user ID for per-user API key lookup
+            model: Optional model name to test with
+            api_key: Optional API key override (for testing before saving)
 
         Returns:
             Test result with latency
         """
-        return await self.llm.test_connection(provider, user_id)
+        return await self.llm.test_connection(provider, user_id, model, api_key=api_key)
 
     def get_providers(self) -> list[dict]:
         """Get list of supported providers."""

@@ -25,6 +25,7 @@ export interface FileRecord {
 
 export interface SimulateTaskRecord {
   task_id: string;
+  name?: string;
   status: string;
   current_step: number;
   params: Record<string, unknown>;
@@ -36,6 +37,7 @@ export interface SimulateTaskRecord {
 
 export interface OpeningResultRecord {
   id: string;
+  name?: string;
   file_id: string | null;
   bidder_count: number;
   bid_ranking: { rank: number; name: string; price: number }[];
@@ -58,6 +60,7 @@ export interface OpeningResultRecord {
 
 export interface ExtractResultRecord {
   id: string;
+  name?: string;
   file_id: string | null;
   template_type: string;
   mode: string;
@@ -132,6 +135,19 @@ export function downloadBlob(blob: Blob, filename: string): void {
 
 export function previewFileUrl(fileId: string): string {
   return `${API_BASE}/api/data/files/${fileId}/preview`;
+}
+
+export async function batchDownloadFiles(fileIds: string[]): Promise<Blob> {
+  const res = await authFetch(`${API_BASE}/api/data/files/batch-download`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ file_ids: fileIds }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || `批量下载失败: HTTP ${res.status}`);
+  }
+  return res.blob();
 }
 
 // --- 模拟任务 ---

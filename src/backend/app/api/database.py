@@ -3,10 +3,14 @@
 当前使用内存 mock 数据，数据库连接后将切换为 Drizzle ORM。
 所有端点强制认证，按 user_id 隔离数据。
 """
+import io
+import zipfile
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from typing import Optional
 from urllib.parse import quote
+
+from pydantic import BaseModel
 
 from app.infrastructure.mock_storage import (
     get_stats, list_files, get_file, delete_file,
@@ -18,6 +22,10 @@ from app.services.file_service import get_file_service
 from app.utils.auth_dep import get_current_user
 
 router = APIRouter(prefix="/data", tags=["data"])
+
+
+class BatchDownloadRequest(BaseModel):
+    file_ids: list[str]
 
 
 # --- 统计概览 ---
@@ -115,6 +123,44 @@ async def api_preview_file(file_id: str, current_user: dict = Depends(get_curren
         raise HTTPException(status_code=404, detail="文件不存在（演示数据无法预览，请上传真实文件）")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/files/batch-download")
+async def api_batch_download_files(body: BatchDownloadRequest, current_user: dict = Depends(get_current_user)):
+    """批量下载文件，打包为 ZIP 返回。"""
+    if not body.file_ids:
+        raise HTTPException(status_code=400, detail="file_ids 不能为空")
+
+    zip_buffer = io.BytesIO()
+    file_service = get_file_service()
+
+    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+        for file_id in body.file_ids:
+            record = get_file(file_id, user_id=current_user["id"])
+            if not record:
+                continue
+            try:
+                content = await file_service.download(file_id)
+                filename = record.get("original_name", file_id)
+                # 去重：同名文件加 ID 后缀
+                info = zf.NameToInfo.get(filename)
+                if info is not None:
+                    name, ext = filename.rsplit(".", 1) if "." in filename else (filename, "")
+                    filename = f"{name}_{file_id[:8]}.{ext}" if ext else f"{name}_{file_id[:8]}"
+                zf.writestr(filename, content)
+            except FileNotFoundError:
+                continue
+            except Exception:
+                continue
+
+    zip_buffer.seek(0)
+    return StreamingResponse(
+        iter([zip_buffer.getvalue()]),
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": "attachment; filename=\"batch_download.zip\""
+        }
+    )
 
 
 # --- 模拟任务 ---

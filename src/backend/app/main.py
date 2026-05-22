@@ -7,7 +7,7 @@ from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
 
 from app.config import get_settings
-from app.api import files, extract, settings, statistics, database as data, health, simulate, auth, api_keys
+from app.api import files, extract, settings, statistics, database as data, health, simulate, auth, api_keys, logs
 from app.utils.exceptions import AppError
 from app.limiter import limiter
 from slowapi import _rate_limit_exceeded_handler
@@ -89,6 +89,29 @@ app.include_router(data.router, prefix="/api")
 app.include_router(simulate.router, prefix="/api")
 app.include_router(auth.router, prefix="/api")
 app.include_router(api_keys.router, prefix="/api")
+app.include_router(logs.router, prefix="/api")
+
+
+# ── Request logging middleware ────────────────────────────────
+import time
+from app.infrastructure.log_collector import add_log
+
+
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    start = time.time()
+    response = await call_next(request)
+    duration = time.time() - start
+    path = request.url.path
+    if path.startswith("/api/") and not path.startswith("/api/logs"):
+        level = "error" if response.status_code >= 400 else "info"
+        add_log(
+            level=level,
+            category="request",
+            message=f"{request.method} {path} {response.status_code} {duration:.2f}s",
+            user_id=None,
+        )
+    return response
 
 
 if __name__ == "__main__":

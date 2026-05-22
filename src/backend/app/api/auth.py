@@ -1,10 +1,22 @@
 """
-Authentication API routes: register, login, refresh, logout, me.
+Authentication API routes: register, login, refresh, logout, me, send-code, forgot-password, reset-password.
 """
 import os
+import random
+import uuid
+from datetime import datetime, timedelta, timezone
+
 from fastapi import APIRouter, HTTPException, Response, Request
-from app.models.schemas import RegisterRequest, LoginRequest, RefreshRequest
-from app.infrastructure.mock_storage import add_user, get_user_by_username, get_user_by_email, get_user_by_id
+from app.models.schemas import (
+    RegisterRequest, LoginRequest, RefreshRequest,
+    SendCodeRequest, ForgotPasswordRequest, ResetPasswordRequest,
+)
+from app.infrastructure.mock_storage import (
+    add_user, get_user_by_username, get_user_by_email, get_user_by_id,
+    save_verification_code, verify_code, delete_verification_code,
+    save_reset_token, get_reset_token, delete_reset_token, update_user_password,
+)
+from app.infrastructure.email_service import send_verification_code as email_send_code, send_reset_link
 from app.utils.crypto import (
     generate_salt, hash_password, verify_password,
     create_access_token, create_refresh_token, decode_token,
@@ -16,10 +28,33 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 _IS_PRODUCTION = os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("RENDER") or os.getenv("FLY_APP_NAME")
 
 
+@router.post("/send-code")
+async def send_code(request: SendCodeRequest):
+    """发送邮箱验证码（注册用）。"""
+    existing = get_user_by_email(request.email)
+    if existing:
+        raise HTTPException(status_code=400, detail="该邮箱已被注册")
+
+    code = f"{random.randint(0, 999999):06d}"
+    expires_at = datetime.now(timezone.utc) + timedelta(minutes=5)
+    save_verification_code(request.email, code, expires_at)
+
+    success = await email_send_code(request.email, code)
+    if not success:
+        raise HTTPException(status_code=500, detail="验证码发送失败，请稍后重试")
+
+    return {"success": True, "message": "验证码已发送"}
+
+
 @router.post("/register")
 async def register(request: RegisterRequest, response: Response):
-    """注册新用户（邮箱为登录标识）。"""
-    # 检查邮箱是否已被注册
+    """注册新用户（需要邮箱验证码）。"""
+    if request.password != request.confirm_password:
+        raise HTTPException(status_code=400, detail="两次输入的密码不一致")
+
+    if not verify_code(request.email, request.code):
+        raise HTTPException(status_code=400, detail="验证码错误或已过期")
+
     existing = get_user_by_email(request.email)
     if existing:
         raise HTTPException(status_code=400, detail="该邮箱已被注册")
@@ -49,6 +84,8 @@ async def register(request: RegisterRequest, response: Response):
         "role": "user",
         "is_active": True,
     })
+
+    delete_verification_code(request.email)
 
     settings = get_settings()
     access_token = create_access_token(
@@ -174,3 +211,36 @@ async def me(request: Request):
         "email": user.get("email"),
         "role": user["role"],
     }
+
+
+@router.post("/forgot-password")
+async def forgot_password(request: ForgotPasswordRequest):
+    """发送密码重置链接到邮箱。"""
+    user = get_user_by_email(request.email)
+    if not user:
+        return {"success": True, "message": "如果该邮箱已注册，重置链接已发送"}
+
+    token = str(uuid.uuid4())
+    expires_at = datetime.now(timezone.utc) + timedelta(minutes=30)
+    save_reset_token(token, user["id"], expires_at)
+
+    success = await send_reset_link(request.email, token)
+    if not success:
+        raise HTTPException(status_code=500, detail="邮件发送失败，请稍后重试")
+
+    return {"success": True, "message": "如果该邮箱已注册，重置链接已发送"}
+
+
+@router.post("/reset-password")
+async def reset_password(request: ResetPasswordRequest):
+    """通过 token 重置密码。"""
+    record = get_reset_token(request.token)
+    if not record:
+        raise HTTPException(status_code=400, detail="重置链接无效或已过期")
+
+    salt = generate_salt()
+    password_hash = hash_password(request.new_password, salt)
+    update_user_password(record["user_id"], password_hash, salt.hex())
+    delete_reset_token(request.token)
+
+    return {"success": True, "message": "密码重置成功，请使用新密码登录"}

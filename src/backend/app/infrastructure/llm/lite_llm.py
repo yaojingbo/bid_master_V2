@@ -2,11 +2,16 @@ from __future__ import annotations
 """
 LiteLLM integration for multi-provider LLM support.
 """
-import os
+import json as _json
+import logging
 import time
 from typing import AsyncGenerator, Any
 
+import httpx
 from app.config import get_settings
+from app.infrastructure.log_collector import add_log as _add_log
+
+logger = logging.getLogger(__name__)
 
 
 class LiteLLMService:
@@ -23,6 +28,11 @@ class LiteLLMService:
         "ollama": "ollama/llama3",
     }
 
+    # 这些供应商通过 httpx 直接调用 OpenAI 兼容 API，
+    # 不经过 OpenAI SDK（Pydantic 响应校验与第三方不完全兼容）
+    # 也不经过 LiteLLM（openai/ 前缀无法可靠转发 api_base）
+    OPENAI_COMPATIBLE_PROVIDERS = {"zhipu", "dashscope", "minimax"}
+
     def __init__(self):
         self.settings = get_settings()
 
@@ -36,8 +46,8 @@ class LiteLLMService:
                 if encrypted:
                     from app.services.encryption_service import get_encryption_service
                     return get_encryption_service().decrypt(encrypted.encode()).decode()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("解密 %s API Key 失败（user_id=%s）: %s，将回退到环境变量", provider, user_id, e)
 
         # 2. Fall back to environment variable
         key_map = {
@@ -49,7 +59,10 @@ class LiteLLMService:
             "minimax": self.settings.minimax_api_key,
             "ollama": self.settings.ollama_base_url,
         }
-        return key_map.get(provider, "")
+        key = key_map.get(provider, "")
+        if not key and provider != "ollama":
+            raise ValueError(f"未配置 {provider} 的 API Key，请在「AI 设置」中添加")
+        return key
 
     def _get_model_name(self, provider: str, model: str = None) -> str:
         """Get model name for provider with litellm prefix format."""
@@ -71,6 +84,108 @@ class LiteLLMService:
             return f"{prefix}{model}"
         return self.MODEL_MAP.get(provider, "gpt-4o")
 
+    async def _complete_via_openai_compat(
+        self,
+        provider: str,
+        messages: list[dict],
+        model: str = None,
+        stream: bool = True,
+        user_id: str = None,
+        api_key_override: str = None,
+    ) -> AsyncGenerator[str, None]:
+        """通过 httpx 直接调用第三方 OpenAI 兼容 API（绕过 OpenAI SDK 的 Pydantic 校验）。"""
+        model_name = self._get_model_name(provider, model)
+        if "/" in model_name:
+            model_name = model_name.split("/", 1)[1]
+
+        api_key = api_key_override or self._get_api_key(provider, user_id)
+        if not api_key:
+            raise ValueError(f"未配置 {provider} 的 API Key，请在设置页面填写后保存")
+
+        base_url = {
+            "zhipu": self.settings.zhipu_base_url,
+            "dashscope": self.settings.dashscope_base_url,
+            "minimax": self.settings.minimax_base_url,
+        }[provider].rstrip("/")
+
+        url = f"{base_url}/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "model": model_name,
+            "messages": messages,
+            "stream": stream,
+        }
+
+        logger.info("调用 %s API: model=%s, base_url=%s", provider, model_name, base_url)
+        timeout = httpx.Timeout(60.0, connect=10.0)
+
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                if stream:
+                    async with client.stream("POST", url, json=payload, headers=headers) as response:
+                        if response.status_code != 200:
+                            error_body = await response.aread()
+                            error_msg = _parse_api_error(error_body, response.status_code)
+                            raise RuntimeError(error_msg)
+
+                        in_think = False
+                        async for line in response.aiter_lines():
+                            if not line.startswith("data: "):
+                                continue
+                            data = line[6:]
+                            if data.strip() == "[DONE]":
+                                break
+                            try:
+                                chunk = _json.loads(data)
+                                if "error" in chunk:
+                                    err_detail = chunk["error"]
+                                    if isinstance(err_detail, dict):
+                                        err_msg = err_detail.get("message", str(err_detail))
+                                    else:
+                                        err_msg = str(err_detail)
+                                    logger.error("API 流式错误 (%s): %s", provider, err_msg)
+                                    raise RuntimeError(f"{provider} API 错误: {err_msg}")
+                                content = chunk.get("choices", [{}])[0].get("delta", {}).get("content", "")
+                                if content:
+                                    if "<think>" in content:
+                                        in_think = True
+                                        before = content.split("<think>")[0]
+                                        if before:
+                                            yield before
+                                        continue
+                                    if "</think>" in content:
+                                        in_think = False
+                                        after = content.split("</think>", 1)[1]
+                                        if after:
+                                            yield after
+                                        continue
+                                    if in_think:
+                                        continue
+                                    yield content
+                            except _json.JSONDecodeError:
+                                continue
+                else:
+                    response = await client.post(url, json=payload, headers=headers)
+                    if response.status_code != 200:
+                        error_msg = _parse_api_error(response.content, response.status_code)
+                        raise RuntimeError(error_msg)
+
+                    result = response.json()
+                    content = result.get("choices", [{}])[0].get("message", {}).get("content", "")
+                    yield content
+
+        except httpx.TimeoutException:
+            raise RuntimeError(f"{provider} API 请求超时，请检查网络连接或稍后重试")
+        except httpx.ConnectError:
+            raise RuntimeError(f"无法连接到 {provider} API（{base_url}），请检查网络或 API 地址是否正确")
+        except RuntimeError:
+            raise
+        except Exception as e:
+            raise RuntimeError(f"调用 {provider} API 失败: {e}") from e
+
     async def complete(
         self,
         provider: str,
@@ -78,6 +193,7 @@ class LiteLLMService:
         model: str = None,
         stream: bool = True,
         user_id: str = None,
+        api_key_override: str = None,
     ) -> AsyncGenerator[str, None] | str:
         """
         Call LLM with messages.
@@ -88,15 +204,31 @@ class LiteLLMService:
             model: Optional model override
             stream: Whether to stream response
             user_id: Optional user ID for per-user API key lookup
+            api_key_override: Optional API key override (bypasses stored/env key lookup)
 
         Yields:
             Response chunks if streaming
         """
+        # OpenAI 兼容第三方供应商走 httpx 直接调用
+        if provider in self.OPENAI_COMPATIBLE_PROVIDERS:
+            resolved_model = self._get_model_name(provider, model)
+            if "/" in resolved_model:
+                resolved_model = resolved_model.split("/", 1)[1]
+            _add_log("info", "llm_call", f"{provider}/{resolved_model} 调用开始 (openai_compat)", user_id=user_id)
+            try:
+                async for chunk in self._complete_via_openai_compat(provider, messages, model, stream, user_id, api_key_override=api_key_override):
+                    yield chunk
+            except Exception as e:
+                _add_log("error", "llm_call", f"{provider}/{resolved_model} 调用失败: {str(e)[:200]}", user_id=user_id)
+                raise
+            return
+
         try:
             from litellm import acompletion
 
             model_name = self._get_model_name(provider, model)
-            api_key = self._get_api_key(provider, user_id)
+            api_key = api_key_override or self._get_api_key(provider, user_id)
+            _add_log("info", "llm_call", f"{provider}/{model_name} 调用开始", user_id=user_id)
 
             # Configure based on provider
             kwargs = {
@@ -105,43 +237,69 @@ class LiteLLMService:
                 "stream": stream,
             }
 
-            # Add provider-specific settings
-            if provider == "ollama":
-                kwargs["api_base"] = self.settings.ollama_base_url
-            else:
+            # API key: all providers except ollama
+            if provider != "ollama":
                 kwargs["api_key"] = api_key
+
+            # API base URL: providers with custom endpoints
+            api_base_map = {
+                "deepseek": self.settings.deepseek_base_url,
+                "ollama": self.settings.ollama_base_url,
+                "zhipu": self.settings.zhipu_base_url,
+                "dashscope": self.settings.dashscope_base_url,
+                "minimax": self.settings.minimax_base_url,
+            }
+            if provider in api_base_map:
+                kwargs["api_base"] = api_base_map[provider]
 
             response = await acompletion(**kwargs)
 
             if stream:
+                in_think = False
                 async for chunk in response:
                     content = chunk.choices[0].delta.content
                     if content:
+                        if "<think>" in content:
+                            in_think = True
+                            before = content.split("<think>")[0]
+                            if before:
+                                yield before
+                            continue
+                        if "</think>" in content:
+                            in_think = False
+                            after = content.split("</think>", 1)[1]
+                            if after:
+                                yield after
+                            continue
+                        if in_think:
+                            continue
                         yield content
             else:
                 yield response.choices[0].message.content
 
         except Exception as e:
-            # 抛出异常而非 yield 文本，让上层 SSE generator 正确处理错误事件
+            _add_log("error", "llm_call", f"{provider} 调用失败: {str(e)[:200]}", user_id=user_id)
             raise
 
-    async def test_connection(self, provider: str, user_id: str = None) -> dict[str, Any]:
+    async def test_connection(self, provider: str, user_id: str = None, model: str = None, api_key: str = None) -> dict[str, Any]:
         """
         Test connection to a provider.
 
         Args:
             provider: Provider name
             user_id: Optional user ID for per-user API key lookup
+            model: Optional model name to test with
+            api_key: Optional API key override (for testing before saving)
 
         Returns:
             Dict with success status, latency, and optional error
         """
         # 先检查是否有可用的 API Key
-        api_key = self._get_api_key(provider, user_id)
-        if not api_key and provider != "ollama":
+        effective_key = api_key or self._get_api_key(provider, user_id)
+        if not effective_key and provider != "ollama":
             return {
                 "success": False,
-                "error": f"未配置 {provider} 的 API Key",
+                "error": f"未配置 {provider} 的 API Key，请在设置页面填写后保存",
                 "message": "Connection failed",
             }
 
@@ -150,7 +308,7 @@ class LiteLLMService:
         try:
             messages = [{"role": "user", "content": "Hi"}]
             response_text = ""
-            async for chunk in self.complete(provider, messages, stream=False, user_id=user_id):
+            async for chunk in self.complete(provider, messages, model=model, stream=False, user_id=user_id, api_key_override=effective_key):
                 response_text += chunk
 
             if response_text.startswith("Error:"):
@@ -190,7 +348,7 @@ class LiteLLMService:
             {
                 "id": "zhipu",
                 "name": "智谱 AI",
-                "models": ["glm-4-flash", "glm-4", "glm-5"],
+                "models": ["glm-4-flash", "glm-4-air", "glm-4-plus", "glm-5.1"],
             },
             {
                 "id": "minimax",
@@ -213,6 +371,26 @@ class LiteLLMService:
                 "models": ["llama3", "mixtral", "codellama"],
             },
         ]
+
+
+def _parse_api_error(body: bytes, status_code: int) -> str:
+    """解析第三方 API 的错误响应，返回可读的错误消息。"""
+    try:
+        error_json = _json.loads(body)
+        # OpenAI 标准格式: {"error": {"message": "...", "type": "..."}}
+        if "error" in error_json:
+            err = error_json["error"]
+            if isinstance(err, dict):
+                msg = err.get("message", str(err))
+                err_type = err.get("type", "")
+                if err_type:
+                    return f"API 错误 ({status_code}): {msg}（{err_type}）"
+                return f"API 错误 ({status_code}): {msg}"
+            return f"API 错误 ({status_code}): {err}"
+        # 其他格式
+        return f"API 错误 ({status_code}): {_json.dumps(error_json, ensure_ascii=False)[:200]}"
+    except Exception:
+        return f"API 错误 ({status_code}): {body.decode(errors='replace')[:200]}"
 
 
 # Global LLM service instance
