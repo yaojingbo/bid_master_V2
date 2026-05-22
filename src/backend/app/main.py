@@ -69,11 +69,14 @@ async def app_error_handler(request: Request, exc: AppError) -> JSONResponse:
 
 @app.exception_handler(Exception)
 async def unhandled_error_handler(request: Request, exc: Exception) -> JSONResponse:
+    import traceback
+    print(f"UNHANDLED ERROR: {request.method} {request.url.path}")
+    traceback.print_exc()
     return JSONResponse(
         status_code=500,
         content={
             "success": False,
-            "error": "Internal server error",
+            "error": f"Internal server error: {exc}",
             "code": "INTERNAL_ERROR",
         },
     )
