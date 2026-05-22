@@ -39,9 +39,9 @@ async def send_code(request: SendCodeRequest):
     expires_at = datetime.now(timezone.utc) + timedelta(minutes=5)
     save_verification_code(request.email, code, expires_at)
 
-    success = await email_send_code(request.email, code)
+    success, err_msg = await email_send_code(request.email, code)
     if not success:
-        raise HTTPException(status_code=500, detail="验证码发送失败，请稍后重试")
+        raise HTTPException(status_code=500, detail=f"验证码发送失败: {err_msg}")
 
     return {"success": True, "message": "验证码已发送"}
 
@@ -224,9 +224,9 @@ async def forgot_password(request: ForgotPasswordRequest):
     expires_at = datetime.now(timezone.utc) + timedelta(minutes=30)
     save_reset_token(token, user["id"], expires_at)
 
-    success = await send_reset_link(request.email, token)
+    success, err_msg = await send_reset_link(request.email, token)
     if not success:
-        raise HTTPException(status_code=500, detail="邮件发送失败，请稍后重试")
+        raise HTTPException(status_code=500, detail=f"邮件发送失败: {err_msg}")
 
     return {"success": True, "message": "如果该邮箱已注册，重置链接已发送"}
 

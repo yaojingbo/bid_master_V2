@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 RESEND_API = "https://api.resend.com/emails"
 
 
-async def send_verification_code(email: str, code: str) -> bool:
+async def send_verification_code(email: str, code: str) -> tuple[bool, str]:
     settings = get_settings()
     subject = "Bid Master - 邮箱验证码"
     text = f"""您好，
@@ -29,7 +29,7 @@ async def send_verification_code(email: str, code: str) -> bool:
     return await _send_email(email, subject, text, settings)
 
 
-async def send_reset_link(email: str, token: str) -> bool:
+async def send_reset_link(email: str, token: str) -> tuple[bool, str]:
     settings = get_settings()
     link = f"{settings.frontend_url}/reset-password?token={token}"
     subject = "Bid Master - 重置密码"
@@ -46,11 +46,11 @@ async def send_reset_link(email: str, token: str) -> bool:
     return await _send_email(email, subject, text, settings)
 
 
-async def _send_email(to: str, subject: str, text: str, settings) -> bool:
+async def _send_email(to: str, subject: str, text: str, settings) -> tuple[bool, str]:
     if not settings.resend_api_key:
         logger.warning(f"Resend API Key 未配置，邮件未发送。收件人: {to}, 主题: {subject}")
         logger.info(f"邮件内容:\n{text}")
-        return True
+        return True, ""
 
     try:
         async with httpx.AsyncClient(timeout=10) as client:
@@ -69,10 +69,12 @@ async def _send_email(to: str, subject: str, text: str, settings) -> bool:
             )
             if resp.status_code == 200:
                 logger.info(f"邮件已发送: to={to}, subject={subject}")
-                return True
+                return True, ""
             else:
-                logger.error(f"Resend 返回错误: {resp.status_code} {resp.text}")
-                return False
+                error_msg = f"Resend 返回错误: {resp.status_code} {resp.text}"
+                logger.error(error_msg)
+                return False, error_msg
     except Exception as e:
-        logger.error(f"邮件发送失败: {e}")
-        return False
+        error_msg = f"邮件发送异常: {e}"
+        logger.error(error_msg)
+        return False, error_msg
