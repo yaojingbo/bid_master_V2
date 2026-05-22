@@ -67,6 +67,7 @@ async def _send_email(to: str, subject: str, body: str, settings) -> bool:
             password=settings.smtp_password,
             use_tls=settings.smtp_port == 465,
             start_tls=settings.smtp_port == 587,
+            timeout=10,
         )
         return True
     except Exception as e:
