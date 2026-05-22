@@ -1,5 +1,5 @@
 """
-邮件发送服务（Resend HTTP API）。
+邮件发送服务（Brevo HTTP API）。
 """
 import logging
 
@@ -8,7 +8,7 @@ from app.config import get_settings
 
 logger = logging.getLogger(__name__)
 
-RESEND_API = "https://api.resend.com/emails"
+BREVO_API = "https://api.brevo.com/v3/smtp/email"
 
 
 async def send_verification_code(email: str, code: str) -> tuple[bool, str]:
@@ -47,31 +47,34 @@ async def send_reset_link(email: str, token: str) -> tuple[bool, str]:
 
 
 async def _send_email(to: str, subject: str, text: str, settings) -> tuple[bool, str]:
-    if not settings.resend_api_key:
-        logger.warning(f"Resend API Key 未配置，邮件未发送。收件人: {to}, 主题: {subject}")
+    if not settings.brevo_api_key:
+        logger.warning(f"Brevo API Key 未配置，邮件未发送。收件人: {to}, 主题: {subject}")
         logger.info(f"邮件内容:\n{text}")
         return True, ""
 
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.post(
-                RESEND_API,
+                BREVO_API,
                 headers={
-                    "Authorization": f"Bearer {settings.resend_api_key}",
+                    "api-key": settings.brevo_api_key,
                     "Content-Type": "application/json",
                 },
                 json={
-                    "from": settings.resend_from,
-                    "to": [to],
+                    "sender": {
+                        "name": "Bid Master",
+                        "email": settings.brevo_from,
+                    },
+                    "to": [{"email": to}],
                     "subject": subject,
-                    "text": text,
+                    "textContent": text,
                 },
             )
-            if resp.status_code == 200:
+            if resp.status_code in (200, 201):
                 logger.info(f"邮件已发送: to={to}, subject={subject}")
                 return True, ""
             else:
-                error_msg = f"Resend 返回错误: {resp.status_code} {resp.text}"
+                error_msg = f"Brevo 返回错误: {resp.status_code} {resp.text}"
                 logger.error(error_msg)
                 return False, error_msg
     except Exception as e:

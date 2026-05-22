@@ -58,9 +58,9 @@ class Settings(BaseSettings):
         "text/csv",
     ]
 
-    # Email (Resend)
-    resend_api_key: str = ""
-    resend_from: str = "Bid Master <onboarding@resend.dev>"
+    # Email (Brevo)
+    brevo_api_key: str = ""
+    brevo_from: str = ""
     frontend_url: str = "http://localhost:3000"
 
 @lru_cache()
