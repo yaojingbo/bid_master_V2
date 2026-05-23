@@ -60,7 +60,7 @@ class Settings(BaseSettings):
 
     # Email (Resend)
     resend_api_key: str = ""
-    resend_from: str = "Bid Master <onboarding@resend.dev>"
+    resend_from: str = "Bid Master <noreply@bidmaster.asia>"
     frontend_url: str = "http://localhost:3000"
 
 @lru_cache()

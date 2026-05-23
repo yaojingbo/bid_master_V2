@@ -73,6 +73,19 @@ export const useFileStore = create<FileState>()(
     }),
     {
       name: "bid-master-file-store",
+      onRehydrateStorage: () => (state) => {
+        if (state && state.files.length > 0) {
+          const seen = new Set<string>();
+          const deduped = state.files.filter((f) => {
+            if (seen.has(f.id)) return false;
+            seen.add(f.id);
+            return true;
+          });
+          if (deduped.length !== state.files.length) {
+            state.files = deduped;
+          }
+        }
+      },
     }
   )
 );
