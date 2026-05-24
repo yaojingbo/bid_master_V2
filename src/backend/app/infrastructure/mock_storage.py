@@ -11,7 +11,9 @@ from datetime import datetime, timezone
 from typing import Optional
 
 # --- Config ---
-DATA_DIR = os.environ.get("DATA_DIR", "/tmp/bidmaster_data")
+# 默认使用项目目录下的 data/，避免 /tmp 在部署重启时被清空
+_DEFAULT_DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "data")
+DATA_DIR = os.environ.get("DATA_DIR", _DEFAULT_DATA_DIR)
 STORAGE_FILE = os.path.join(DATA_DIR, "mock_storage.json")
 
 # --- In-memory dicts (loaded from disk on startup) ---

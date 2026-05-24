@@ -738,7 +738,7 @@ async def analyze_comprehensive(request: OpeningAnalysisRequest, current_user: d
         analysis_data = compute_all_dimensions(parsed["bidders"], parsed["meta"], modules)
 
         return EventSourceResponse(
-            comprehensive_analysis_generator(analysis_data, request.provider or "deepseek", model=request.model if hasattr(request, 'model') else None, user_id=current_user["id"]),
+            comprehensive_analysis_generator(analysis_data, request.provider or "deepseek", model=request.model, user_id=current_user["id"]),
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -812,7 +812,7 @@ async def start_comprehensive_analysis(
         async def _run_llm():
             llm_service = LLMService()
             provider = request.provider or "deepseek"
-            model = request.model if hasattr(request, "model") else None
+            model = request.model
 
             prompt_builder = get_prompt_builder()
             statistics_json = json.dumps(analysis_data, ensure_ascii=False, indent=2)

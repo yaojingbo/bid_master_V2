@@ -7,7 +7,6 @@ import { useAuthStore } from "@/stores/auth-store";
 import { useLogStore } from "@/stores/log-store";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
-const SSE_BASE = process.env.NEXT_PUBLIC_SSE_URL || "";
 
 let refreshPromise: Promise<string | null> | null = null;
 
@@ -69,8 +68,7 @@ export async function authFetch(url: string, options?: RequestInit): Promise<Res
 }
 
 /**
- * SSE 流式请求。默认走 Next.js rewrite 代理（与 authFetch 一致），
- * 如需直连后端可设置 NEXT_PUBLIC_SSE_URL 环境变量。
+ * SSE 流式请求，使用与 authFetch 相同的代理路径和认证逻辑。
  */
 export async function authFetchSSE(url: string, options?: RequestInit): Promise<Response> {
   const { accessToken } = useAuthStore.getState();
@@ -79,7 +77,7 @@ export async function authFetchSSE(url: string, options?: RequestInit): Promise<
     headers.set("Authorization", `Bearer ${accessToken}`);
   }
 
-  const fullUrl = url.startsWith("/") ? `${SSE_BASE}${url}` : url;
+  const fullUrl = url.startsWith("/") ? `${API_BASE}${url}` : url;
 
   const response = await fetch(fullUrl, { ...options, headers, credentials: "include" });
 

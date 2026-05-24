@@ -63,3 +63,4 @@ notes/
 .env
 .vercel
 .env*.local
+data/
