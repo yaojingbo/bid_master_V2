@@ -7,7 +7,7 @@ import { useAuthStore } from "@/stores/auth-store";
 import { useLogStore } from "@/stores/log-store";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
-const SSE_BASE = process.env.NEXT_PUBLIC_SSE_URL || "http://localhost:8000";
+const SSE_BASE = process.env.NEXT_PUBLIC_SSE_URL || "";
 
 let refreshPromise: Promise<string | null> | null = null;
 
@@ -69,7 +69,8 @@ export async function authFetch(url: string, options?: RequestInit): Promise<Res
 }
 
 /**
- * SSE 流式请求直连后端（绕过 Next.js rewrite 代理的缓冲）。
+ * SSE 流式请求。默认走 Next.js rewrite 代理（与 authFetch 一致），
+ * 如需直连后端可设置 NEXT_PUBLIC_SSE_URL 环境变量。
  */
 export async function authFetchSSE(url: string, options?: RequestInit): Promise<Response> {
   const { accessToken } = useAuthStore.getState();
@@ -80,7 +81,7 @@ export async function authFetchSSE(url: string, options?: RequestInit): Promise<
 
   const fullUrl = url.startsWith("/") ? `${SSE_BASE}${url}` : url;
 
-  const response = await fetch(fullUrl, { ...options, headers });
+  const response = await fetch(fullUrl, { ...options, headers, credentials: "include" });
 
   if (response.status === 401) {
     if (!refreshPromise) {
@@ -91,8 +92,14 @@ export async function authFetchSSE(url: string, options?: RequestInit): Promise<
     const newToken = await refreshPromise;
     if (newToken) {
       headers.set("Authorization", `Bearer ${newToken}`);
-      return fetch(fullUrl, { ...options, headers });
+      return fetch(fullUrl, { ...options, headers, credentials: "include" });
     }
+
+    useAuthStore.getState().logout();
+    if (typeof window !== "undefined") {
+      window.location.href = "/login";
+    }
+    return response;
   }
 
   return response;

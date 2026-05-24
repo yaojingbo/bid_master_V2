@@ -17,6 +17,7 @@ from sse_starlette.sse import EventSourceResponse
 
 from app.services.statistics_service import StatisticsService
 from app.services.llm_service import LLMService
+from app.services.prompt_builder import get_prompt_builder
 from app.models.schemas import OpeningAnalysisRequest
 from app.utils.auth_dep import get_current_user
 from app.infrastructure.mock_storage import add_opening, update_opening, get_opening, get_file
@@ -646,26 +647,12 @@ async def comprehensive_analysis_generator(
         "data": json.dumps({"type": "progress", "message": "AI 正在生成综合分析..."}),
     }
 
-    summary = f"""请对以下开标分析结果进行综合分析，给出专业建议：
-
-投标单位数量: {analysis_data.get('bidder_count', 0)}
-项目名称: {analysis_data.get('meta', {}).get('project_name', '未知')}
-
-投标价排名: {json.dumps(analysis_data.get('bid_ranking', []), ensure_ascii=False)}
-降价分析: {json.dumps(analysis_data.get('discount_results', []), ensure_ascii=False)}
-统计分析: {json.dumps(analysis_data.get('bid_stats', {}), ensure_ascii=False)}
-评分对比: {json.dumps(analysis_data.get('score_ranking', []), ensure_ascii=False)}
-基准价对比: {json.dumps(analysis_data.get('benchmark_comparison', []), ensure_ascii=False)}
-
-请从以下角度分析：
-1. 竞争态势总体评价
-2. 价格策略建议
-3. 评分趋势分析
-4. 中标可能性预测"""
+    prompt_builder = get_prompt_builder()
+    statistics_json = json.dumps(analysis_data, ensure_ascii=False, indent=2)
 
     messages = [
-        {"role": "system", "content": "你是一个专业的招投标分析顾问，请基于数据给出客观、专业的分析建议。"},
-        {"role": "user", "content": summary},
+        {"role": "system", "content": prompt_builder.build_opening_system_prompt()},
+        {"role": "user", "content": prompt_builder.build_opening_user_prompt(statistics_json)},
     ]
 
     chunk_queue: asyncio.Queue = asyncio.Queue()
@@ -673,7 +660,7 @@ async def comprehensive_analysis_generator(
 
     async def _llm_background_task():
         try:
-            async for chunk in llm_service.llm.complete(provider, messages, model=model, stream=True, user_id=user_id):
+            async for chunk in llm_service.llm.complete(provider, messages, model=model, stream=True, user_id=user_id, temperature=0.3):
                 result_holder["text"] += chunk
                 await chunk_queue.put({"type": "chunk", "content": chunk})
             result_holder["done"] = True
@@ -827,31 +814,17 @@ async def start_comprehensive_analysis(
             provider = request.provider or "deepseek"
             model = request.model if hasattr(request, "model") else None
 
-            summary = f"""请对以下开标分析结果进行综合分析，给出专业建议：
-
-投标单位数量: {analysis_data.get('bidder_count', 0)}
-项目名称: {analysis_data.get('meta', {}).get('project_name', '未知')}
-
-投标价排名: {json.dumps(analysis_data.get('bid_ranking', []), ensure_ascii=False)}
-降价分析: {json.dumps(analysis_data.get('discount_results', []), ensure_ascii=False)}
-统计分析: {json.dumps(analysis_data.get('bid_stats', {}), ensure_ascii=False)}
-评分对比: {json.dumps(analysis_data.get('score_ranking', []), ensure_ascii=False)}
-基准价对比: {json.dumps(analysis_data.get('benchmark_comparison', []), ensure_ascii=False)}
-
-请从以下角度分析：
-1. 竞争态势总体评价
-2. 价格策略建议
-3. 评分趋势分析
-4. 中标可能性预测"""
+            prompt_builder = get_prompt_builder()
+            statistics_json = json.dumps(analysis_data, ensure_ascii=False, indent=2)
 
             messages = [
-                {"role": "system", "content": "你是一个专业的招投标分析顾问，请基于数据给出客观、专业的分析建议。"},
-                {"role": "user", "content": summary},
+                {"role": "system", "content": prompt_builder.build_opening_system_prompt()},
+                {"role": "user", "content": prompt_builder.build_opening_user_prompt(statistics_json)},
             ]
 
             result_text = ""
             try:
-                async for chunk in llm_service.llm.complete(provider, messages, model=model, stream=True, user_id=user_id):
+                async for chunk in llm_service.llm.complete(provider, messages, model=model, stream=True, user_id=user_id, temperature=0.3):
                     result_text += chunk
                 update_opening(task_id, {"ai_analysis": result_text, "status": "completed"})
             except Exception as e:
@@ -887,7 +860,6 @@ async def start_comprehensive_analysis_upload(
         task_id = str(uuid.uuid4())[:8]
         user_id = current_user["id"]
 
-        resolved_model = model or "deepseek-chat"
         add_opening({
             "id": task_id,
             "file_id": analysis_data.get("file_id"),
@@ -899,39 +871,25 @@ async def start_comprehensive_analysis_upload(
             "ai_analysis": "",
             "status": "running",
             "provider": provider or "deepseek",
-            "model": resolved_model,
+            "model": model or "",
         }, user_id=user_id)
 
         async def _run_llm():
             llm_service = LLMService()
 
-            summary = f"""请对以下开标分析结果进行综合分析，给出专业建议：
-
-投标单位数量: {analysis_data.get('bidder_count', 0)}
-项目名称: {analysis_data.get('meta', {}).get('project_name', '未知')}
-
-投标价排名: {json.dumps(analysis_data.get('bid_ranking', []), ensure_ascii=False)}
-降价分析: {json.dumps(analysis_data.get('discount_results', []), ensure_ascii=False)}
-统计分析: {json.dumps(analysis_data.get('bid_stats', {}), ensure_ascii=False)}
-评分对比: {json.dumps(analysis_data.get('score_ranking', []), ensure_ascii=False)}
-基准价对比: {json.dumps(analysis_data.get('benchmark_comparison', []), ensure_ascii=False)}
-
-请从以下角度分析：
-1. 竞争态势总体评价
-2. 价格策略建议
-3. 评分趋势分析
-4. 中标可能性预测"""
+            prompt_builder = get_prompt_builder()
+            statistics_json = json.dumps(analysis_data, ensure_ascii=False, indent=2)
 
             messages = [
-                {"role": "system", "content": "你是一个专业的招投标分析顾问。请基于数据给出客观、专业的分析建议。所有输出必须使用中文，直接输出分析内容，不要有任何开场白、自我介绍或思考过程。"},
-                {"role": "user", "content": summary},
+                {"role": "system", "content": prompt_builder.build_opening_system_prompt()},
+                {"role": "user", "content": prompt_builder.build_opening_user_prompt(statistics_json)},
             ]
 
             result_text = ""
             try:
                 async def _do_stream():
                     nonlocal result_text
-                    async for chunk in llm_service.llm.complete(provider or "deepseek", messages, model=model, stream=True, user_id=user_id):
+                    async for chunk in llm_service.llm.complete(provider or "deepseek", messages, model=model, stream=True, user_id=user_id, temperature=0.3):
                         result_text += chunk
 
                 await asyncio.wait_for(_do_stream(), timeout=180)

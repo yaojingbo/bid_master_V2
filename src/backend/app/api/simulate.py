@@ -19,15 +19,6 @@ class CreateSimulateRequest(BaseModel):
     file_ids: List[str]
 
 
-class SimulateParams(BaseModel):
-    project_name: str
-    project_type: str
-    project_scale: str
-    investment_estimate: Optional[str] = ""
-    region: Optional[str] = ""
-    special_requirements: Optional[str] = ""
-
-
 class StepRequest(BaseModel):
     provider: Optional[str] = "deepseek"
     model: Optional[str] = None
@@ -171,12 +162,31 @@ async def stream_step4_generator(task_id: str, params: dict, provider: str = "de
         yield {"event": event.get("type", "message"), "data": json.dumps(event, ensure_ascii=False)}
 
 
+class Step4Request(BaseModel):
+    provider: Optional[str] = "deepseek"
+    model: Optional[str] = None
+    project_name: str
+    project_type: str
+    project_scale: str
+    investment_estimate: Optional[str] = ""
+    region: Optional[str] = ""
+    special_requirements: Optional[str] = ""
+
+
 @router.post("/{task_id}/step/4")
-async def run_step4(task_id: str, params: SimulateParams, provider: Optional[str] = "deepseek", model: Optional[str] = None, current_user: dict = Depends(get_current_user)):
+async def run_step4(task_id: str, request: Step4Request, current_user: dict = Depends(get_current_user)):
     """Step 4: 编制（SSE流式）"""
     try:
+        params = {
+            "project_name": request.project_name,
+            "project_type": request.project_type,
+            "project_scale": request.project_scale,
+            "investment_estimate": request.investment_estimate,
+            "region": request.region,
+            "special_requirements": request.special_requirements,
+        }
         return EventSourceResponse(
-            stream_step4_generator(task_id, params.model_dump(), provider, user_id=current_user["id"], model=model)
+            stream_step4_generator(task_id, params, request.provider, user_id=current_user["id"], model=request.model)
         )
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))

@@ -92,6 +92,7 @@ class LiteLLMService:
         stream: bool = True,
         user_id: str = None,
         api_key_override: str = None,
+        temperature: float = None,
     ) -> AsyncGenerator[str, None]:
         """通过 httpx 直接调用第三方 OpenAI 兼容 API（绕过 OpenAI SDK 的 Pydantic 校验）。"""
         model_name = self._get_model_name(provider, model)
@@ -118,6 +119,8 @@ class LiteLLMService:
             "messages": messages,
             "stream": stream,
         }
+        if temperature is not None:
+            payload["temperature"] = temperature
 
         logger.info("调用 %s API: model=%s, base_url=%s", provider, model_name, base_url)
         timeout = httpx.Timeout(60.0, connect=10.0)
@@ -194,6 +197,7 @@ class LiteLLMService:
         stream: bool = True,
         user_id: str = None,
         api_key_override: str = None,
+        temperature: float = None,
     ) -> AsyncGenerator[str, None] | str:
         """
         Call LLM with messages.
@@ -205,6 +209,7 @@ class LiteLLMService:
             stream: Whether to stream response
             user_id: Optional user ID for per-user API key lookup
             api_key_override: Optional API key override (bypasses stored/env key lookup)
+            temperature: Optional sampling temperature (0.0-2.0, lower = more deterministic)
 
         Yields:
             Response chunks if streaming
@@ -216,7 +221,7 @@ class LiteLLMService:
                 resolved_model = resolved_model.split("/", 1)[1]
             _add_log("info", "llm_call", f"{provider}/{resolved_model} 调用开始 (openai_compat)", user_id=user_id)
             try:
-                async for chunk in self._complete_via_openai_compat(provider, messages, model, stream, user_id, api_key_override=api_key_override):
+                async for chunk in self._complete_via_openai_compat(provider, messages, model, stream, user_id, api_key_override=api_key_override, temperature=temperature):
                     yield chunk
             except Exception as e:
                 _add_log("error", "llm_call", f"{provider}/{resolved_model} 调用失败: {str(e)[:200]}", user_id=user_id)
@@ -236,6 +241,9 @@ class LiteLLMService:
                 "messages": messages,
                 "stream": stream,
             }
+
+            if temperature is not None:
+                kwargs["temperature"] = temperature
 
             # API key: all providers except ollama
             if provider != "ollama":
