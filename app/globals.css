@@ -77,6 +77,14 @@ body {
   animation: progress-indeterminate 1.5s ease-in-out infinite;
 }
 
+@keyframes shimmer {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+.animate-shimmer {
+  animation: shimmer 2s ease-in-out infinite;
+}
+
 /* ── 文件输入框隐藏（兼容 label 激活）────────── */
 /* Tailwind v4 的 sr-only 使用 clip-path: inset(50%)
    Chrome 会拒绝 <label> 对 clip-path 隐藏的 <input type="file"> 的激活转发。

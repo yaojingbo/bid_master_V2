@@ -144,6 +144,7 @@ export default function StatisticsPage() {
   } | null>(null);
   const [aiContent, setAiContent] = useState("");
   const [aiStreaming, setAiStreaming] = useState(false);
+  const [aiPercentage, setAiPercentage] = useState<number | null>(null);
   const [analysisTaskId, setAnalysisTaskId] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -152,6 +153,23 @@ export default function StatisticsPage() {
 
   // 两级选择状态
   const [selectionStep, setSelectionStep] = useState<1 | 2>(1);
+
+  // AI 分析进度模拟（轮询模式无真实百分比，用时间模拟递增）
+  useEffect(() => {
+    if (!aiStreaming) {
+      setAiPercentage(null);
+      return;
+    }
+    setAiPercentage(5);
+    const timer = setInterval(() => {
+      setAiPercentage((prev) => {
+        if (prev === null) return 5;
+        if (prev >= 90) return prev;
+        return prev + Math.random() * 3 + 1;
+      });
+    }, 800);
+    return () => clearInterval(timer);
+  }, [aiStreaming]);
   const [rawHeaders, setRawHeaders] = useState<string[]>([]);
   const [columnMapping, setColumnMapping] = useState<Record<string, string>>({});
   const [selectedColumns, setSelectedColumns] = useState<string[]>([]);
@@ -1181,6 +1199,7 @@ export default function StatisticsPage() {
                   <TaskProgress
                     phases={statisticsPhases}
                     currentPhase="analyzing"
+                    percentage={aiPercentage}
                     message={`AI 正在分析中（${activeProvider}/${activeModel || "default"}）...`}
                     isActive={aiStreaming}
                     isDone={false}
