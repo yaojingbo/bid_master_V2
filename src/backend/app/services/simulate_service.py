@@ -10,7 +10,7 @@ import uuid
 from typing import Optional, AsyncGenerator, Dict, Any
 from dataclasses import dataclass, field
 
-from app.infrastructure.mock_storage import add_simulate, update_simulate
+from app.infrastructure.pg_storage import add_simulate, update_simulate
 
 
 @dataclass
@@ -41,11 +41,11 @@ class SimulateService:
             self._tasks[user_id] = {}
         return self._tasks[user_id]
 
-    def create_task(self, file_ids: list[str], user_id: str = None) -> SimulateTask:
+    async def create_task(self, file_ids: list[str], user_id: str = None) -> SimulateTask:
         """创建模拟任务（Step 0）"""
         task_id = f"sim_{uuid.uuid4().hex[:10]}"
         from datetime import datetime
-        from app.infrastructure.mock_storage import get_file
+        from app.infrastructure.pg_storage import get_file
         task = SimulateTask(
             task_id=task_id,
             file_ids=file_ids,
@@ -56,10 +56,9 @@ class SimulateService:
         user_tasks = self._get_user_tasks(user_id)
         user_tasks[task_id] = task
 
-        # 根据源文件名生成任务名称
         file_names = []
         for fid in file_ids[:3]:
-            f = get_file(fid, user_id)
+            f = await get_file(fid, user_id)
             if f:
                 name = f.get("original_name", "")
                 if name:
@@ -67,7 +66,7 @@ class SimulateService:
         ts = datetime.now().strftime("%m%d_%H%M")
         task_name = f"模拟编制_{'_'.join(file_names[:2])}_{ts}" if file_names else f"模拟编制_{ts}"
 
-        add_simulate({
+        await add_simulate({
             "task_id": task_id,
             "name": task_name,
             "status": "pending",
@@ -135,7 +134,7 @@ class SimulateService:
         if not failed or len(converted) > 0:
             task.status = "step2_extract"
 
-        update_simulate(task_id, {
+        await update_simulate(task_id, {
             "status": task.status,
             "current_step": task.current_step,
             "step_results": {"step1": task.step1_result},
@@ -205,7 +204,7 @@ class SimulateService:
                     task.step2_result = result_holder["text"]
                     task.current_step = 2
                     task.status = "step3_compare"
-                    update_simulate(task_id, {
+                    await update_simulate(task_id, {
                         "status": task.status,
                         "current_step": task.current_step,
                         "step_results": {"step1": task.step1_result, "step2": task.step2_result},
@@ -222,13 +221,13 @@ class SimulateService:
                     task.step2_result = result_holder["text"]
                     task.current_step = 2
                     task.status = "step3_compare"
-                    update_simulate(task_id, {
+                    await update_simulate(task_id, {
                         "status": task.status,
                         "current_step": task.current_step,
                         "step_results": {"step1": task.step1_result, "step2": task.step2_result},
                     })
                 elif result_holder["text"]:
-                    update_simulate(task_id, {
+                    await update_simulate(task_id, {
                         "status": "interrupted",
                         "current_step": 1,
                         "step_results": {"step1": task.step1_result},
@@ -239,7 +238,7 @@ class SimulateService:
                             task.step2_result = result_holder["text"]
                             task.current_step = 2
                             task.status = "step3_compare"
-                            update_simulate(task_id, {
+                            await update_simulate(task_id, {
                                 "status": task.status,
                                 "current_step": task.current_step,
                                 "step_results": {"step1": task.step1_result, "step2": task.step2_result},
@@ -295,7 +294,7 @@ class SimulateService:
                     task.step3_result = result_holder["text"]
                     task.current_step = 3
                     task.status = "step4_simulate"
-                    update_simulate(task_id, {
+                    await update_simulate(task_id, {
                         "status": task.status,
                         "current_step": task.current_step,
                         "step_results": {"step1": task.step1_result, "step2": task.step2_result, "step3": task.step3_result},
@@ -312,20 +311,20 @@ class SimulateService:
                     task.step3_result = result_holder["text"]
                     task.current_step = 3
                     task.status = "step4_simulate"
-                    update_simulate(task_id, {
+                    await update_simulate(task_id, {
                         "status": task.status,
                         "current_step": task.current_step,
                         "step_results": {"step1": task.step1_result, "step2": task.step2_result, "step3": task.step3_result},
                     })
                 elif result_holder["text"]:
-                    update_simulate(task_id, {"status": "interrupted", "current_step": 2})
+                    await update_simulate(task_id, {"status": "interrupted", "current_step": 2})
                     async def _ensure_save():
                         await bg_task
                         if result_holder["done"]:
                             task.step3_result = result_holder["text"]
                             task.current_step = 3
                             task.status = "step4_simulate"
-                            update_simulate(task_id, {
+                            await update_simulate(task_id, {
                                 "status": task.status,
                                 "current_step": task.current_step,
                                 "step_results": {"step1": task.step1_result, "step2": task.step2_result, "step3": task.step3_result},
@@ -385,7 +384,7 @@ class SimulateService:
                     task.step4_result = result_holder["text"]
                     task.current_step = 4
                     task.status = "completed"
-                    update_simulate(task_id, {
+                    await update_simulate(task_id, {
                         "status": "completed",
                         "current_step": 4,
                         "step_results": {
@@ -407,7 +406,7 @@ class SimulateService:
                     task.step4_result = result_holder["text"]
                     task.current_step = 4
                     task.status = "completed"
-                    update_simulate(task_id, {
+                    await update_simulate(task_id, {
                         "status": "completed",
                         "current_step": 4,
                         "step_results": {
@@ -418,14 +417,14 @@ class SimulateService:
                         },
                     })
                 elif result_holder["text"]:
-                    update_simulate(task_id, {"status": "interrupted", "current_step": 3})
+                    await update_simulate(task_id, {"status": "interrupted", "current_step": 3})
                     async def _ensure_save():
                         await bg_task
                         if result_holder["done"]:
                             task.step4_result = result_holder["text"]
                             task.current_step = 4
                             task.status = "completed"
-                            update_simulate(task_id, {
+                            await update_simulate(task_id, {
                                 "status": "completed",
                                 "current_step": 4,
                                 "step_results": {

@@ -137,8 +137,8 @@ async def extract_threshold(request: Request, current_user: dict = Depends(get_c
 @router.get("/status/{task_id}")
 async def get_extract_status(task_id: str, current_user: dict = Depends(get_current_user)):
     """获取提取任务状态（兼容旧版 task_id 查询）。"""
-    from app.infrastructure.mock_storage import get_extract
-    result = get_extract(task_id, user_id=current_user["id"])
+    from app.infrastructure.pg_storage import get_extract
+    result = await get_extract(task_id, user_id=current_user["id"])
     if result:
         return {"success": True, "data": result}
     return {
@@ -150,8 +150,8 @@ async def get_extract_status(task_id: str, current_user: dict = Depends(get_curr
 @router.get("/result/by-file/{file_id}")
 async def get_extract_result_by_file(file_id: str, current_user: dict = Depends(get_current_user)):
     """根据文件 ID 获取最新的提取结果。"""
-    from app.infrastructure.mock_storage import list_extracts
-    results = list_extracts(page=1, page_size=50, user_id=current_user["id"])
+    from app.infrastructure.pg_storage import list_extracts
+    results = await list_extracts(page=1, page_size=50, user_id=current_user["id"])
     for r in results.get("results", []):
         if r.get("file_id") == file_id:
             return {"success": True, "data": r}

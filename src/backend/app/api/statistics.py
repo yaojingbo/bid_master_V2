@@ -20,7 +20,7 @@ from app.services.llm_service import LLMService
 from app.services.prompt_builder import get_prompt_builder
 from app.models.schemas import OpeningAnalysisRequest
 from app.utils.auth_dep import get_current_user
-from app.infrastructure.mock_storage import add_opening, update_opening, get_opening, get_file
+from app.infrastructure.pg_storage import add_opening, update_opening, get_opening, get_file
 
 logger = logging.getLogger(__name__)
 
@@ -554,11 +554,11 @@ async def analyze_opening(request: OpeningAnalysisRequest, current_user: dict = 
         modules = request.modules or None
         result = compute_all_dimensions(parsed["bidders"], parsed["meta"], modules)
 
-        file_record = get_file(request.fileId)
+        file_record = await get_file(request.fileId)
         original_name = file_record.get("original_name", "") if file_record else ""
 
         # 保存开标结果到 mock_storage
-        add_opening({
+        await add_opening({
             "file_id": request.fileId,
             "file_name": original_name,
             "bidder_count": result.get("bidder_count", parsed.get("bidder_count", 0)),
@@ -590,7 +590,7 @@ async def analyze_opening_upload(
         result = compute_all_dimensions(parsed["bidders"], parsed["meta"], module_list)
 
         # 保存开标结果到 mock_storage
-        add_opening({
+        await add_opening({
             "file_id": None,
             "file_name": file.filename or "",
             "bidder_count": result.get("bidder_count", parsed.get("bidder_count", 0)),
@@ -625,7 +625,7 @@ async def comprehensive_analysis_generator(
     llm_service = LLMService()
 
     task_id = str(uuid.uuid4())[:8]
-    add_opening({
+    await add_opening({
         "id": task_id,
         "file_id": analysis_data.get("file_id"),
         "file_name": analysis_data.get("file_name", ""),
@@ -682,7 +682,7 @@ async def comprehensive_analysis_generator(
                     "data": json.dumps({"type": "content", "content": event["content"]}),
                 }
             elif event["type"] == "llm_done":
-                update_opening(task_id, {
+                await update_opening(task_id, {
                     "ai_analysis": result_holder["text"],
                     "status": "completed",
                 })
@@ -696,7 +696,7 @@ async def comprehensive_analysis_generator(
                 }
                 break
             elif event["type"] == "llm_error":
-                update_opening(task_id, {"status": "error", "ai_analysis": result_holder["text"]})
+                await update_opening(task_id, {"status": "error", "ai_analysis": result_holder["text"]})
                 _saved = True
                 yield {
                     "event": "error",
@@ -707,14 +707,14 @@ async def comprehensive_analysis_generator(
     finally:
         if not _saved:
             if result_holder["done"]:
-                update_opening(task_id, {"ai_analysis": result_holder["text"], "status": "completed"})
+                await update_opening(task_id, {"ai_analysis": result_holder["text"], "status": "completed"})
             elif result_holder["text"]:
-                update_opening(task_id, {"ai_analysis": result_holder["text"], "status": "partial"})
+                await update_opening(task_id, {"ai_analysis": result_holder["text"], "status": "partial"})
 
                 async def _ensure_save_on_completion():
                     await background_task
                     if result_holder["done"]:
-                        update_opening(task_id, {"ai_analysis": result_holder["text"], "status": "completed"})
+                        await update_opening(task_id, {"ai_analysis": result_holder["text"], "status": "completed"})
 
                 asyncio.create_task(_ensure_save_on_completion())
 
@@ -791,13 +791,13 @@ async def start_comprehensive_analysis(
         modules = request.modules or None
         analysis_data = compute_all_dimensions(parsed["bidders"], parsed["meta"], modules)
 
-        file_record = get_file(request.fileId)
+        file_record = await get_file(request.fileId)
         original_name = file_record.get("original_name", "") if file_record else ""
 
         task_id = str(uuid.uuid4())[:8]
         user_id = current_user["id"]
 
-        add_opening({
+        await add_opening({
             "id": task_id,
             "file_id": analysis_data.get("file_id"),
             "file_name": original_name,
@@ -826,9 +826,9 @@ async def start_comprehensive_analysis(
             try:
                 async for chunk in llm_service.llm.complete(provider, messages, model=model, stream=True, user_id=user_id, temperature=0.3):
                     result_text += chunk
-                update_opening(task_id, {"ai_analysis": result_text, "status": "completed"})
+                await update_opening(task_id, {"ai_analysis": result_text, "status": "completed"})
             except Exception as e:
-                update_opening(task_id, {"ai_analysis": result_text, "status": "error"})
+                await update_opening(task_id, {"ai_analysis": result_text, "status": "error"})
 
         asyncio.create_task(_run_llm())
 
@@ -860,7 +860,7 @@ async def start_comprehensive_analysis_upload(
         task_id = str(uuid.uuid4())[:8]
         user_id = current_user["id"]
 
-        add_opening({
+        await add_opening({
             "id": task_id,
             "file_id": analysis_data.get("file_id"),
             "file_name": file.filename or "",
@@ -893,11 +893,11 @@ async def start_comprehensive_analysis_upload(
                         result_text += chunk
 
                 await asyncio.wait_for(_do_stream(), timeout=180)
-                update_opening(task_id, {"ai_analysis": result_text, "status": "completed"})
+                await update_opening(task_id, {"ai_analysis": result_text, "status": "completed"})
             except asyncio.TimeoutError:
-                update_opening(task_id, {"ai_analysis": result_text or "分析超时，请检查 API Key 配置或重试", "status": "error"})
+                await update_opening(task_id, {"ai_analysis": result_text or "分析超时，请检查 API Key 配置或重试", "status": "error"})
             except Exception as e:
-                update_opening(task_id, {"ai_analysis": result_text or f"分析失败: {str(e)}", "status": "error"})
+                await update_opening(task_id, {"ai_analysis": result_text or f"分析失败: {str(e)}", "status": "error"})
 
         asyncio.create_task(_run_llm())
 
@@ -909,7 +909,7 @@ async def start_comprehensive_analysis_upload(
 @router.get("/analysis-task/{task_id}")
 async def get_analysis_task(task_id: str, current_user: dict = Depends(get_current_user)):
     """获取综合分析任务状态和结果（前端轮询用）。"""
-    record = get_opening(task_id, user_id=current_user["id"])
+    record = await get_opening(task_id, user_id=current_user["id"])
     if not record:
         raise HTTPException(status_code=404, detail="任务不存在")
     return {"success": True, "data": record}

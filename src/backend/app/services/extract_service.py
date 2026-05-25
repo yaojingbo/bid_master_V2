@@ -8,7 +8,7 @@ import json
 
 from app.services.llm_service import LLMService
 from app.services.file_service import FileService
-from app.infrastructure.mock_storage import add_extract, get_file
+from app.infrastructure.pg_storage import add_extract, get_file
 
 
 def extract_text_from_pdf(content: bytes, max_pages: int = 30) -> str:
@@ -217,7 +217,7 @@ class ExtractService:
         result_holder = {"text": "", "done": False, "error": None}
         _saved = False
 
-        file_record = get_file(file_id)
+        file_record = await get_file(file_id)
         file_name = file_record.get("original_name", "") if file_record else ""
 
         resolved_model = model or self.llm.llm.MODEL_MAP.get(provider, "unknown")
@@ -269,7 +269,7 @@ class ExtractService:
                             else:
                                 found_elements = []
 
-                            add_extract({
+                            await add_extract({
                                 "file_id": file_id,
                                 "file_name": file_name,
                                 "template_type": template_type,
@@ -288,7 +288,7 @@ class ExtractService:
                                 "percentage": 100,
                             }
                         else:
-                            add_extract({
+                            await add_extract({
                                 "file_id": file_id,
                                 "file_name": file_name,
                                 "template_type": template_type,
@@ -302,7 +302,7 @@ class ExtractService:
                                 "data": {"summary": "文档分析完成（文本格式）", "elementCount": 0},
                             }
                     except json.JSONDecodeError:
-                        add_extract({
+                        await add_extract({
                             "file_id": file_id,
                             "file_name": file_name,
                             "template_type": template_type,
@@ -325,7 +325,7 @@ class ExtractService:
             if not _saved:
                 if result_holder["done"]:
                     full_response = result_holder["text"]
-                    add_extract({
+                    await add_extract({
                         "file_id": file_id,
                         "file_name": file_name,
                         "template_type": template_type,
@@ -334,7 +334,7 @@ class ExtractService:
                         "status": "completed_disconnected",
                     }, user_id=user_id)
                 elif result_holder["text"]:
-                    add_extract({
+                    await add_extract({
                         "file_id": file_id,
                         "file_name": file_name,
                         "template_type": template_type,
@@ -348,7 +348,7 @@ class ExtractService:
                     async def _ensure_save_on_completion():
                         await background_task
                         if result_holder["done"] and not _saved:
-                            add_extract({
+                            await add_extract({
                                 "file_id": file_id,
                                 "file_name": file_name,
                                 "template_type": template_type,

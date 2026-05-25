@@ -3,7 +3,7 @@ API Key 管理路由 — 用户可存储自己的 LLM API Key，Fernet 加密存
 """
 from fastapi import APIRouter, Depends, HTTPException
 from app.models.schemas import ApiKeySaveRequest
-from app.infrastructure.mock_storage import (
+from app.infrastructure.pg_storage import (
     save_api_key,
     get_api_key,
     delete_api_key,
@@ -25,11 +25,11 @@ def _mask_key(key: str) -> str:
 @router.get("")
 async def list_keys(user: dict = Depends(get_current_user)):
     """列出当前用户已存储的 API Key（masked）。"""
-    records = list_user_api_keys(user["id"])
+    records = await list_user_api_keys(user["id"])
     enc_service = get_encryption_service()
     keys = []
     for r in records:
-        encrypted = get_api_key(user["id"], r["provider"])
+        encrypted = await get_api_key(user["id"], r["provider"])
         if encrypted:
             try:
                 plaintext = enc_service.decrypt(encrypted.encode()).decode()
@@ -44,14 +44,14 @@ async def save_key(request: ApiKeySaveRequest, user: dict = Depends(get_current_
     """保存或更新一个 API Key。明文传入，Fernet 加密后存储。"""
     enc_service = get_encryption_service()
     encrypted = enc_service.encrypt(request.api_key.encode()).decode()
-    save_api_key(user["id"], request.provider, encrypted)
+    await save_api_key(user["id"], request.provider, encrypted)
     return {"success": True, "message": f"API Key for {request.provider} 已保存"}
 
 
 @router.delete("/{provider}")
 async def remove_key(provider: str, user: dict = Depends(get_current_user)):
     """删除指定 provider 的 API Key。"""
-    deleted = delete_api_key(user["id"], provider)
+    deleted = await delete_api_key(user["id"], provider)
     if not deleted:
         raise HTTPException(status_code=404, detail="未找到该 provider 的 API Key")
     return {"success": True, "message": f"API Key for {provider} 已删除"}

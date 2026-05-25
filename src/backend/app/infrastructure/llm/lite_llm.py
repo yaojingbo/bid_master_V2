@@ -36,13 +36,12 @@ class LiteLLMService:
     def __init__(self):
         self.settings = get_settings()
 
-    def _get_api_key(self, provider: str, user_id: str = None) -> str:
+    async def _get_api_key(self, provider: str, user_id: str = None) -> str:
         """Get API key for provider. Checks user-stored key first, then falls back to env vars."""
-        # 1. Check user-stored key (encrypted in mock_storage)
         if user_id:
             try:
-                from app.infrastructure.mock_storage import get_api_key as _get_user_key
-                encrypted = _get_user_key(user_id, provider)
+                from app.infrastructure.pg_storage import get_api_key as _get_user_key
+                encrypted = await _get_user_key(user_id, provider)
                 if encrypted:
                     from app.services.encryption_service import get_encryption_service
                     return get_encryption_service().decrypt(encrypted.encode()).decode()
@@ -99,7 +98,7 @@ class LiteLLMService:
         if "/" in model_name:
             model_name = model_name.split("/", 1)[1]
 
-        api_key = api_key_override or self._get_api_key(provider, user_id)
+        api_key = api_key_override or await self._get_api_key(provider, user_id)
         if not api_key:
             raise ValueError(f"未配置 {provider} 的 API Key，请在设置页面填写后保存")
 
@@ -232,7 +231,7 @@ class LiteLLMService:
             from litellm import acompletion
 
             model_name = self._get_model_name(provider, model)
-            api_key = api_key_override or self._get_api_key(provider, user_id)
+            api_key = api_key_override or await self._get_api_key(provider, user_id)
             _add_log("info", "llm_call", f"{provider}/{model_name} 调用开始", user_id=user_id)
 
             # Configure based on provider
@@ -303,7 +302,7 @@ class LiteLLMService:
             Dict with success status, latency, and optional error
         """
         # 先检查是否有可用的 API Key
-        effective_key = api_key or self._get_api_key(provider, user_id)
+        effective_key = api_key or await self._get_api_key(provider, user_id)
         if not effective_key and provider != "ollama":
             return {
                 "success": False,

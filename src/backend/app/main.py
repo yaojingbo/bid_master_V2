@@ -17,10 +17,20 @@ from slowapi.errors import RateLimitExceeded
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan handler for startup/shutdown."""
+    from app.infrastructure.database import get_database, close_database
+    from app.infrastructure.db_schema import init_schema
+
     settings = get_settings()
     print(f"Starting Bid Master API on port 8000")
     print(f"Database: {settings.database_url[:50]}...")
+
+    db = await get_database()
+    await init_schema(db)
+    print("Database schema initialized")
+
     yield
+
+    await close_database()
     print("Shutting down Bid Master API")
 
 

@@ -12,7 +12,7 @@ from urllib.parse import quote
 
 from pydantic import BaseModel
 
-from app.infrastructure.mock_storage import (
+from app.infrastructure.pg_storage import (
     get_stats, list_files, get_file, delete_file,
     list_simulates, get_simulate, delete_simulate,
     list_openings, get_opening, delete_opening,
@@ -34,7 +34,7 @@ class BatchDownloadRequest(BaseModel):
 @router.get("/stats")
 async def api_get_stats(current_user: dict = Depends(get_current_user)):
     """获取各模块数据总数。"""
-    return get_stats(user_id=current_user["id"])
+    return await get_stats(user_id=current_user["id"])
 
 
 # --- 文件管理 ---
@@ -48,13 +48,13 @@ async def api_list_files(
     current_user: dict = Depends(get_current_user),
 ):
     """分页列出文件，可按类型筛选。"""
-    return list_files(page, page_size, file_type, user_id=current_user["id"])
+    return await list_files(page, page_size, file_type, user_id=current_user["id"])
 
 
 @router.get("/files/{file_id}")
 async def api_get_file(file_id: str, current_user: dict = Depends(get_current_user)):
     """获取单个文件详情。"""
-    record = get_file(file_id, user_id=current_user["id"])
+    record = await get_file(file_id, user_id=current_user["id"])
     if not record:
         raise HTTPException(status_code=404, detail="File not found")
     return {"file": record}
@@ -63,7 +63,7 @@ async def api_get_file(file_id: str, current_user: dict = Depends(get_current_us
 @router.delete("/files/{file_id}")
 async def api_delete_file(file_id: str, current_user: dict = Depends(get_current_user)):
     """删除文件。"""
-    deleted = delete_file(file_id, user_id=current_user["id"])
+    deleted = await delete_file(file_id, user_id=current_user["id"])
     if not deleted:
         raise HTTPException(status_code=404, detail="File not found")
     return {"success": True}
@@ -72,7 +72,7 @@ async def api_delete_file(file_id: str, current_user: dict = Depends(get_current
 @router.get("/files/{file_id}/download")
 async def api_download_file(file_id: str, current_user: dict = Depends(get_current_user)):
     """下载原始文件（加密存储，解密后返回）。"""
-    record = get_file(file_id, user_id=current_user["id"])
+    record = await get_file(file_id, user_id=current_user["id"])
     if not record:
         raise HTTPException(status_code=404, detail="File not found")
     try:
@@ -96,7 +96,7 @@ async def api_download_file(file_id: str, current_user: dict = Depends(get_curre
 @router.get("/files/{file_id}/preview")
 async def api_preview_file(file_id: str, current_user: dict = Depends(get_current_user)):
     """预览文件（inline 返回，浏览器直接渲染）。"""
-    record = get_file(file_id, user_id=current_user["id"])
+    record = await get_file(file_id, user_id=current_user["id"])
     if not record:
         raise HTTPException(status_code=404, detail="File not found")
     try:
@@ -136,7 +136,7 @@ async def api_batch_download_files(body: BatchDownloadRequest, current_user: dic
 
     with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
         for file_id in body.file_ids:
-            record = get_file(file_id, user_id=current_user["id"])
+            record = await get_file(file_id, user_id=current_user["id"])
             if not record:
                 continue
             try:
@@ -174,13 +174,13 @@ async def api_list_simulates(
     current_user: dict = Depends(get_current_user),
 ):
     """分页列出模拟任务，可按状态筛选。"""
-    return list_simulates(page, page_size, status, user_id=current_user["id"])
+    return await list_simulates(page, page_size, status, user_id=current_user["id"])
 
 
 @router.get("/simulates/{task_id}")
 async def api_get_simulate(task_id: str, current_user: dict = Depends(get_current_user)):
     """获取模拟任务详情。"""
-    record = get_simulate(task_id, user_id=current_user["id"])
+    record = await get_simulate(task_id, user_id=current_user["id"])
     if not record:
         raise HTTPException(status_code=404, detail="Task not found")
     return {"task": record}
@@ -189,7 +189,7 @@ async def api_get_simulate(task_id: str, current_user: dict = Depends(get_curren
 @router.delete("/simulates/{task_id}")
 async def api_delete_simulate(task_id: str, current_user: dict = Depends(get_current_user)):
     """删除模拟任务。"""
-    deleted = delete_simulate(task_id, user_id=current_user["id"])
+    deleted = await delete_simulate(task_id, user_id=current_user["id"])
     if not deleted:
         raise HTTPException(status_code=404, detail="Task not found")
     return {"success": True}
@@ -205,13 +205,13 @@ async def api_list_openings(
     current_user: dict = Depends(get_current_user),
 ):
     """分页列出开标分析结果。"""
-    return list_openings(page, page_size, user_id=current_user["id"])
+    return await list_openings(page, page_size, user_id=current_user["id"])
 
 
 @router.get("/openings/{task_id}")
 async def api_get_opening(task_id: str, current_user: dict = Depends(get_current_user)):
     """获取开标结果详情。"""
-    record = get_opening(task_id, user_id=current_user["id"])
+    record = await get_opening(task_id, user_id=current_user["id"])
     if not record:
         raise HTTPException(status_code=404, detail="Result not found")
     return record
@@ -220,7 +220,7 @@ async def api_get_opening(task_id: str, current_user: dict = Depends(get_current
 @router.delete("/openings/{task_id}")
 async def api_delete_opening(task_id: str, current_user: dict = Depends(get_current_user)):
     """删除开标结果。"""
-    deleted = delete_opening(task_id, user_id=current_user["id"])
+    deleted = await delete_opening(task_id, user_id=current_user["id"])
     if not deleted:
         raise HTTPException(status_code=404, detail="Result not found")
     return {"success": True}
@@ -236,13 +236,13 @@ async def api_list_extracts(
     current_user: dict = Depends(get_current_user),
 ):
     """分页列出提取结果。"""
-    return list_extracts(page, page_size, user_id=current_user["id"])
+    return await list_extracts(page, page_size, user_id=current_user["id"])
 
 
 @router.get("/extracts/{result_id}")
 async def api_get_extract(result_id: str, current_user: dict = Depends(get_current_user)):
     """获取提取结果详情。"""
-    record = get_extract(result_id, user_id=current_user["id"])
+    record = await get_extract(result_id, user_id=current_user["id"])
     if not record:
         raise HTTPException(status_code=404, detail="Result not found")
     return record
@@ -251,7 +251,7 @@ async def api_get_extract(result_id: str, current_user: dict = Depends(get_curre
 @router.delete("/extracts/{result_id}")
 async def api_delete_extract(result_id: str, current_user: dict = Depends(get_current_user)):
     """删除提取结果。"""
-    deleted = delete_extract(result_id, user_id=current_user["id"])
+    deleted = await delete_extract(result_id, user_id=current_user["id"])
     if not deleted:
         raise HTTPException(status_code=404, detail="Result not found")
     return {"success": True}

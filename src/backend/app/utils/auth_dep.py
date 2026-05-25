@@ -4,7 +4,7 @@ FastAPI dependency for extracting and validating current user from JWT token.
 from fastapi import Depends, HTTPException, Request
 from app.utils.crypto import decode_token
 from app.config import get_settings
-from app.infrastructure.mock_storage import get_user_by_id
+from app.infrastructure.pg_storage import get_user_by_id
 
 
 async def get_current_user(request: Request) -> dict:
@@ -19,7 +19,7 @@ async def get_current_user(request: Request) -> dict:
         raise HTTPException(status_code=401, detail="无效或过期的 token")
 
     user_id = payload.get("sub")
-    user = get_user_by_id(user_id)
+    user = await get_user_by_id(user_id)
     if not user or not user.get("is_active"):
         raise HTTPException(status_code=401, detail="用户不存在或已禁用")
 

@@ -32,7 +32,7 @@ simulate_service = get_simulate_service()
 async def create_simulate_task(request: CreateSimulateRequest, current_user: dict = Depends(get_current_user)):
     """创建模拟任务（Step 0）"""
     try:
-        task = simulate_service.create_task(request.file_ids, user_id=current_user["id"])
+        task = await simulate_service.create_task(request.file_ids, user_id=current_user["id"])
         return {
             "success": True,
             "data": {

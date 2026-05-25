@@ -11,7 +11,7 @@ from app.models.schemas import (
     RegisterRequest, LoginRequest, RefreshRequest,
     SendCodeRequest, ForgotPasswordRequest, ResetPasswordRequest,
 )
-from app.infrastructure.mock_storage import (
+from app.infrastructure.pg_storage import (
     add_user, get_user_by_username, get_user_by_email, get_user_by_id,
     save_verification_code, verify_code, delete_verification_code,
     save_reset_token, get_reset_token, delete_reset_token, update_user_password,
@@ -31,13 +31,13 @@ _IS_PRODUCTION = os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("RENDER") or os.g
 @router.post("/send-code")
 async def send_code(request: SendCodeRequest):
     """发送邮箱验证码（注册用）。"""
-    existing = get_user_by_email(request.email)
+    existing = await get_user_by_email(request.email)
     if existing:
         raise HTTPException(status_code=400, detail="该邮箱已被注册")
 
     code = f"{random.randint(0, 999999):06d}"
     expires_at = datetime.now(timezone.utc) + timedelta(minutes=5)
-    save_verification_code(request.email, code, expires_at)
+    await save_verification_code(request.email, code, expires_at)
 
     success, err_msg = await email_send_code(request.email, code)
     if not success:
@@ -52,10 +52,10 @@ async def register(request: RegisterRequest, response: Response):
     if request.password != request.confirm_password:
         raise HTTPException(status_code=400, detail="两次输入的密码不一致")
 
-    if not verify_code(request.email, request.code):
+    if not await verify_code(request.email, request.code):
         raise HTTPException(status_code=400, detail="验证码错误或已过期")
 
-    existing = get_user_by_email(request.email)
+    existing = await get_user_by_email(request.email)
     if existing:
         raise HTTPException(status_code=400, detail="该邮箱已被注册")
 
@@ -65,18 +65,18 @@ async def register(request: RegisterRequest, response: Response):
         base = request.email.split("@")[0].replace(".", "_")
         username = base
         suffix = 1
-        while get_user_by_username(username):
+        while await get_user_by_username(username):
             username = f"{base}{suffix}"
             suffix += 1
 
     # 检查用户名是否已被占用
-    if get_user_by_username(username):
+    if await get_user_by_username(username):
         raise HTTPException(status_code=400, detail="用户名已被使用")
 
     salt = generate_salt()
     password_hash = hash_password(request.password, salt)
 
-    user = add_user({
+    user = await add_user({
         "username": username,
         "email": request.email,
         "password_hash": password_hash,
@@ -85,7 +85,7 @@ async def register(request: RegisterRequest, response: Response):
         "is_active": True,
     })
 
-    delete_verification_code(request.email)
+    await delete_verification_code(request.email)
 
     settings = get_settings()
     access_token = create_access_token(
@@ -119,7 +119,7 @@ async def register(request: RegisterRequest, response: Response):
 @router.post("/login")
 async def login(request: LoginRequest, response: Response):
     """邮箱登录。"""
-    user = get_user_by_email(request.email)
+    user = await get_user_by_email(request.email)
     if not user or not user.get("is_active"):
         raise HTTPException(status_code=401, detail="邮箱或密码错误")
 
@@ -168,7 +168,7 @@ async def refresh(request: Request):
         raise HTTPException(status_code=401, detail="无效的 refresh token")
 
     user_id = payload.get("sub")
-    user = get_user_by_id(user_id)
+    user = await get_user_by_id(user_id)
     if not user or not user.get("is_active"):
         raise HTTPException(status_code=401, detail="用户不存在或已禁用")
 
@@ -201,7 +201,7 @@ async def me(request: Request):
         raise HTTPException(status_code=401, detail="无效或过期的 token")
 
     user_id = payload.get("sub")
-    user = get_user_by_id(user_id)
+    user = await get_user_by_id(user_id)
     if not user:
         raise HTTPException(status_code=401, detail="用户不存在")
 
@@ -216,13 +216,13 @@ async def me(request: Request):
 @router.post("/forgot-password")
 async def forgot_password(request: ForgotPasswordRequest):
     """发送密码重置链接到邮箱。"""
-    user = get_user_by_email(request.email)
+    user = await get_user_by_email(request.email)
     if not user:
         return {"success": True, "message": "如果该邮箱已注册，重置链接已发送"}
 
     token = str(uuid.uuid4())
     expires_at = datetime.now(timezone.utc) + timedelta(minutes=30)
-    save_reset_token(token, user["id"], expires_at)
+    await save_reset_token(token, user["id"], expires_at)
 
     success, err_msg = await send_reset_link(request.email, token)
     if not success:
@@ -234,13 +234,13 @@ async def forgot_password(request: ForgotPasswordRequest):
 @router.post("/reset-password")
 async def reset_password(request: ResetPasswordRequest):
     """通过 token 重置密码。"""
-    record = get_reset_token(request.token)
+    record = await get_reset_token(request.token)
     if not record:
         raise HTTPException(status_code=400, detail="重置链接无效或已过期")
 
     salt = generate_salt()
     password_hash = hash_password(request.new_password, salt)
-    update_user_password(record["user_id"], password_hash, salt.hex())
-    delete_reset_token(request.token)
+    await update_user_password(record["user_id"], password_hash, salt.hex())
+    await delete_reset_token(request.token)
 
     return {"success": True, "message": "密码重置成功，请使用新密码登录"}

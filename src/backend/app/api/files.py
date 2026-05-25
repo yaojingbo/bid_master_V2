@@ -10,7 +10,7 @@ from urllib.parse import quote
 from app.services.file_service import FileService
 from app.models.schemas import FileUploadResponse, FileListResponse, FileListItem
 from app.utils.exceptions import FileTooLargeError, UnsupportedFileTypeError
-from app.infrastructure.mock_storage import add_file, list_files as mock_list_files, get_file as mock_get_file, delete_file as mock_delete_file, _now
+from app.infrastructure.pg_storage import add_file, list_files as pg_list_files, get_file as pg_get_file, delete_file as pg_delete_file, _now
 from app.utils.auth_dep import get_current_user
 
 router = APIRouter(prefix="/files", tags=["files"])
@@ -35,7 +35,7 @@ async def upload_file(
             category=category,
         )
 
-        add_file({
+        await add_file({
             "id": result["id"],
             "original_name": result["name"],
             "path": result["encrypted_path"],
@@ -72,7 +72,7 @@ async def list_files(
     current_user: dict = Depends(get_current_user),
 ):
     """List uploaded files."""
-    result = mock_list_files(page, limit, file_type, user_id=current_user["id"])
+    result = await pg_list_files(page, limit, file_type, user_id=current_user["id"])
     return {
         "success": True,
         "data": {
@@ -90,7 +90,7 @@ async def list_files(
 @router.get("/{file_id}")
 async def get_file(file_id: str, current_user: dict = Depends(get_current_user)):
     """Get file metadata."""
-    record = mock_get_file(file_id, user_id=current_user["id"])
+    record = await pg_get_file(file_id, user_id=current_user["id"])
     if not record:
         raise HTTPException(status_code=404, detail="File not found")
     return {
@@ -108,7 +108,7 @@ async def get_file(file_id: str, current_user: dict = Depends(get_current_user))
 @router.get("/{file_id}/download")
 async def download_file(file_id: str, current_user: dict = Depends(get_current_user)):
     """Download and decrypt a file."""
-    record = mock_get_file(file_id, user_id=current_user["id"])
+    record = await pg_get_file(file_id, user_id=current_user["id"])
     if not record:
         raise HTTPException(status_code=404, detail="File not found")
     filename = record.get("original_name", f"{file_id}.pdf")
@@ -135,7 +135,7 @@ async def delete_file(file_id: str, current_user: dict = Depends(get_current_use
     try:
         file_service = FileService()
         deleted = await file_service.delete(file_id)
-        mock_delete_file(file_id, user_id=current_user["id"])
+        await pg_delete_file(file_id, user_id=current_user["id"])
         return {
             "success": deleted,
             "message": "File deleted" if deleted else "File not found"
