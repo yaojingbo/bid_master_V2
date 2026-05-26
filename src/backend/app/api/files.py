@@ -4,6 +4,7 @@ File management API routes.
 """
 from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, Query
 from fastapi.responses import StreamingResponse
+from pathlib import Path
 from typing import Optional
 from urllib.parse import quote
 
@@ -14,6 +15,23 @@ from app.infrastructure.pg_storage import add_file, list_files as pg_list_files,
 from app.utils.auth_dep import get_current_user
 
 router = APIRouter(prefix="/files", tags=["files"])
+
+MIME_TYPE_EXTENSIONS = {
+    "application/pdf": "pdf",
+    "text/markdown": "md",
+    "application/msword": "doc",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
+    "application/vnd.ms-excel": "xls",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
+    "text/csv": "csv",
+}
+
+
+def normalize_file_type(filename: str, mime_type: str) -> str:
+    suffix = Path(filename or "").suffix.lower().lstrip(".")
+    if suffix:
+        return suffix[:50]
+    return MIME_TYPE_EXTENSIONS.get(mime_type, (mime_type.rsplit("/", 1)[-1] if mime_type else "file"))[:50]
 
 
 @router.post("/upload")
@@ -40,7 +58,7 @@ async def upload_file(
             "original_name": result["name"],
             "path": result["encrypted_path"],
             "size": result["size"],
-            "type": result["mime_type"].split("/")[-1] if "/" in result["mime_type"] else result["mime_type"],
+            "type": normalize_file_type(result["name"], result["mime_type"]),
             "created_at": _now(),
         }, user_id=current_user["id"])
 

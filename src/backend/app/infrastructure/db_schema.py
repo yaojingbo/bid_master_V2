@@ -39,10 +39,12 @@ CREATE TABLE IF NOT EXISTS files (
     original_name TEXT NOT NULL,
     path TEXT NOT NULL,
     size BIGINT DEFAULT 0,
-    type VARCHAR(20),
+    type VARCHAR(50),
     user_id VARCHAR(64) REFERENCES users(id) ON DELETE CASCADE,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+ALTER TABLE files ALTER COLUMN type TYPE VARCHAR(50);
 
 CREATE TABLE IF NOT EXISTS simulates (
     task_id VARCHAR(64) PRIMARY KEY,
