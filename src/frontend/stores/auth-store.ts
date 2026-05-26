@@ -5,6 +5,7 @@
  */
 import { create } from "zustand";
 import { authLogin, authRegister, authRefresh, authMe } from "@/lib/auth-api";
+import { setAuthCookie, clearAuthCookie } from "@/lib/auth-cookie";
 import { useFileStore } from "@/stores/file-store";
 import { useTaskStore } from "@/stores/task-store";
 import { useLogStore } from "@/stores/log-store";
@@ -21,6 +22,7 @@ interface AuthState {
   accessToken: string | null;
   isAuthenticated: boolean;
   isLoading: boolean;
+  authReady: boolean;
   login: (email: string, password: string) => Promise<void>;
   register: (email: string, password: string, confirmPassword: string, code: string, username?: string) => Promise<void>;
   logout: () => void;
@@ -33,6 +35,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   accessToken: null,
   isAuthenticated: false,
   isLoading: false,
+  authReady: false,
 
   login: async (email, password) => {
     set({ isLoading: true });
@@ -48,7 +51,9 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         user: res.user,
         isAuthenticated: true,
         isLoading: false,
+        authReady: true,
       });
+      setAuthCookie();
     } catch (err) {
       set({ isLoading: false });
       throw err;
@@ -69,7 +74,9 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         user: res.user,
         isAuthenticated: true,
         isLoading: false,
+        authReady: true,
       });
+      setAuthCookie();
     } catch (err) {
       set({ isLoading: false });
       throw err;
@@ -78,7 +85,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
   logout: () => {
     fetch("/api/auth/logout", { method: "POST", credentials: "include" }).catch(() => {});
-    set({ accessToken: null, user: null, isAuthenticated: false });
+    clearAuthCookie();
+    set({ accessToken: null, user: null, isAuthenticated: false, authReady: true });
     // 清空所有 persist store，防止下一个用户看到当前用户数据
     useFileStore.getState().clearFiles();
     useTaskStore.getState().clearExtract();
@@ -91,12 +99,13 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     try {
       const res = await authRefresh();
       set({ accessToken: res.access_token, isAuthenticated: true });
-      // refresh 成功后获取用户信息
       const user = await authMe(res.access_token);
       set({ user });
+      setAuthCookie();
       return res.access_token;
     } catch {
       set({ accessToken: null, user: null, isAuthenticated: false });
+      clearAuthCookie();
       return null;
     }
   },
@@ -106,15 +115,27 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     if (accessToken) {
       try {
         const user = await authMe(accessToken);
-        set({ user, isAuthenticated: true });
+        set({ user, isAuthenticated: true, authReady: true });
+        setAuthCookie();
       } catch {
         const newToken = await refreshAccessToken();
-        if (!newToken) set({ isAuthenticated: false });
+        if (!newToken) {
+          set({ isAuthenticated: false, authReady: true });
+          clearAuthCookie();
+        } else {
+          set({ authReady: true });
+          setAuthCookie();
+        }
       }
     } else {
-      // accessToken 为空，尝试通过 httpOnly cookie 中的 refresh_token 刷新
       const newToken = await refreshAccessToken();
-      if (!newToken) set({ isAuthenticated: false });
+      if (!newToken) {
+        set({ isAuthenticated: false, authReady: true });
+        clearAuthCookie();
+      } else {
+        set({ authReady: true });
+        setAuthCookie();
+      }
     }
   },
 }));

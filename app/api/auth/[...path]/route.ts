@@ -1,7 +1,7 @@
 /**
  * Auth API 代理路由。
- * Vercel rewrite 会剥离后端的 Set-Cookie 头，
- * 所以用 Next.js API Route 代替——在服务器端读取后端 Set-Cookie，
+ * Next.js rewrites 不保证转发后端的 Set-Cookie 头，
+ * 所以用 API Route 代替——在服务器端读取后端 Set-Cookie，
  * 再由 Next.js 自己设置 cookie 给浏览器。
  */
 import { NextRequest, NextResponse } from "next/server";
@@ -11,7 +11,25 @@ const BACKEND = process.env.NODE_ENV === "production"
   : "http://localhost:8000";
 
 const IS_PRODUCTION = process.env.NODE_ENV === "production";
-const REFRESH_COOKIE_MAX_AGE = 7 * 86400; // 7 天（与后端 jwt_refresh_token_expire_days 一致）
+const REFRESH_COOKIE_MAX_AGE = 7 * 86400; // 7 天
+
+/** 从后端响应中提取 refresh_token 值（兼容不同 Node.js 版本的 header 读取） */
+function extractRefreshToken(headers: Headers): string | null {
+  // 优先用 getSetCookie()（Node.js 20+ / undici 5.22+）
+  if (typeof headers.getSetCookie === "function") {
+    for (const c of headers.getSetCookie()) {
+      const m = c.match(/refresh_token=([^;]+)/);
+      if (m) return m[1];
+    }
+  }
+  // 回退：某些 undici 版本 getSetCookie 返回空但 get 仍可用
+  const raw = headers.get("set-cookie");
+  if (raw) {
+    const m = raw.match(/refresh_token=([^;]+)/);
+    if (m) return m[1];
+  }
+  return null;
+}
 
 async function proxyAuthRequest(
   request: NextRequest,
@@ -49,22 +67,21 @@ async function proxyAuthRequest(
 
   // 登录/注册：从后端 Set-Cookie 提取 refresh_token，在 Next.js 响应中重新设置
   if (action === "login" || action === "register") {
-    const setCookies = backendRes.headers.getSetCookie();
-    for (const c of setCookies) {
-      const m = c.match(/refresh_token=([^;]+)/);
-      if (m) {
-        res.cookies.set("refresh_token", m[1], {
-          httpOnly: true,
-          secure: IS_PRODUCTION,
-          sameSite: "lax",
-          path: "/",
-          maxAge: REFRESH_COOKIE_MAX_AGE,
-        });
-      }
+    const tokenValue = extractRefreshToken(backendRes.headers);
+    if (tokenValue) {
+      res.cookies.set("refresh_token", tokenValue, {
+        httpOnly: true,
+        secure: IS_PRODUCTION,
+        sameSite: "lax",
+        path: "/",
+        maxAge: REFRESH_COOKIE_MAX_AGE,
+      });
+    } else {
+      console.warn("[auth-proxy] login/register 响应中未找到 refresh_token Set-Cookie");
     }
   }
 
-  // logout：清除 refresh_token cookie（maxAge=0）
+  // logout：清除 refresh_token cookie
   if (action === "logout") {
     res.cookies.set("refresh_token", "", {
       httpOnly: true,

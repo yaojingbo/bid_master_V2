@@ -1,38 +1,56 @@
 from __future__ import annotations
 """
 Database connection manager using asyncpg.
-For production deployment, configure DATABASE_URL to a PostgreSQL instance.
-Currently using mock_storage as the default data layer.
 """
-from typing import Optional
+from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
+import ssl
 import asyncpg
 
 from app.config import get_settings
 
 
-class Database:
-    """asyncpg-based PostgreSQL connection manager.
+def _clean_dsn(dsn: str) -> tuple[str, bool]:
+    """Remove asyncpg-incompatible params from DSN. Returns (cleaned_dsn, needs_ssl)."""
+    parsed = urlparse(dsn)
+    params = parse_qs(parsed.query, keep_blank_values=True)
 
-    Usage:
-        db = Database(url)
-        await db.connect()
-        rows = await db.fetch_all("SELECT * FROM tender_documents")
-        await db.disconnect()
-    """
+    needs_ssl = False
+    if "sslmode" in params:
+        mode = params["sslmode"][0]
+        if mode in ("require", "verify-ca", "verify-full"):
+            needs_ssl = True
+        del params["sslmode"]
+
+    params.pop("channel_binding", None)
+
+    flat = {k: v[0] for k, v in params.items()}
+    new_query = urlencode(flat)
+    cleaned = urlunparse(parsed._replace(query=new_query))
+    return cleaned, needs_ssl
+
+
+class Database:
+    """asyncpg-based PostgreSQL connection manager."""
 
     def __init__(self, database_url: str | None = None):
         settings = get_settings()
-        self.database_url = database_url or settings.database_url
+        raw_url = database_url or settings.database_url
+        self.database_url, self._needs_ssl = _clean_dsn(raw_url)
         self._pool: asyncpg.Pool | None = None
 
     async def connect(self) -> None:
         if self._pool:
             return
-        self._pool = await asyncpg.create_pool(
-            self.database_url,
-            min_size=2,
-            max_size=10,
-        )
+        kwargs: dict = {"min_size": 2, "max_size": 10}
+        if self._needs_ssl:
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+            kwargs["ssl"] = ctx
+        if "-pooler" in self.database_url:
+            kwargs["statement_cache_size"] = 0
+        self._pool = await asyncpg.create_pool(self.database_url, **kwargs)
+        print("Database pool connected")
 
     async def disconnect(self) -> None:
         if self._pool:

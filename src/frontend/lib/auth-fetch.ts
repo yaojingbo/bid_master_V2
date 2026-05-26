@@ -57,9 +57,12 @@ export async function authFetch(url: string, options?: RequestInit): Promise<Res
       return fetch(fullUrl, { ...options, headers, credentials: "include" });
     }
 
-    useAuthStore.getState().logout();
-    if (typeof window !== "undefined") {
-      window.location.href = "/login";
+    const { authReady } = useAuthStore.getState();
+    if (authReady) {
+      useAuthStore.getState().logout();
+      if (typeof window !== "undefined") {
+        window.location.href = "/login";
+      }
     }
     return response;
   }
@@ -93,9 +96,12 @@ export async function authFetchSSE(url: string, options?: RequestInit): Promise<
       return fetch(fullUrl, { ...options, headers, credentials: "include" });
     }
 
-    useAuthStore.getState().logout();
-    if (typeof window !== "undefined") {
-      window.location.href = "/login";
+    const { authReady } = useAuthStore.getState();
+    if (authReady) {
+      useAuthStore.getState().logout();
+      if (typeof window !== "undefined") {
+        window.location.href = "/login";
+      }
     }
     return response;
   }
