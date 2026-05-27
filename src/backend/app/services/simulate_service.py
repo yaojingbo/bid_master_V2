@@ -117,7 +117,7 @@ class SimulateService:
         for file_id in task.file_ids:
             try:
                 content = await file_service.download(file_id)
-                text = extract_text_from_content(content)
+                text, _ = extract_text_from_content(content)
 
                 converted.append({
                     "file_id": file_id,
@@ -160,7 +160,7 @@ class SimulateService:
         for file_id in task.file_ids:
             try:
                 content = await file_service.download(file_id)
-                text = extract_text_from_content(content)
+                text, _ = extract_text_from_content(content)
                 combined_text += f"\n## 文件: {file_id}\n{text[:30000]}\n---\n"
             except Exception:
                 pass
