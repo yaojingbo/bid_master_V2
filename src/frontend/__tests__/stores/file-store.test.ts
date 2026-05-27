@@ -20,7 +20,8 @@ describe('File Store', () => {
       id: 'uuid-1',
       name: 'tender.pdf',
       size: 1024,
-      type: 'application/pdf',
+      mimeType: 'application/pdf',
+      category: 'tender',
       status: 'uploading',
       createdAt: new Date().toISOString(),
     });
@@ -36,7 +37,8 @@ describe('File Store', () => {
       id: 'uuid-1',
       name: 'tender1.pdf',
       size: 1024,
-      type: 'application/pdf',
+      mimeType: 'application/pdf',
+      category: 'tender',
       status: 'ready',
       createdAt: new Date().toISOString(),
     });
@@ -45,7 +47,8 @@ describe('File Store', () => {
       id: 'uuid-2',
       name: 'tender2.pdf',
       size: 2048,
-      type: 'application/pdf',
+      mimeType: 'application/pdf',
+      category: 'tender',
       status: 'ready',
       createdAt: new Date().toISOString(),
     });
@@ -60,7 +63,8 @@ describe('File Store', () => {
       id: 'uuid-1',
       name: 'tender.pdf',
       size: 1024,
-      type: 'application/pdf',
+      mimeType: 'application/pdf',
+      category: 'tender',
       status: 'uploading',
       createdAt: new Date().toISOString(),
     });
@@ -77,7 +81,8 @@ describe('File Store', () => {
       id: 'uuid-1',
       name: 'tender.pdf',
       size: 1024,
-      type: 'application/pdf',
+      mimeType: 'application/pdf',
+      category: 'tender',
       status: 'ready',
       createdAt: new Date().toISOString(),
     });
@@ -94,7 +99,8 @@ describe('File Store', () => {
       id: 'uuid-1',
       name: 'tender1.pdf',
       size: 1024,
-      type: 'application/pdf',
+      mimeType: 'application/pdf',
+      category: 'tender',
       status: 'ready',
       createdAt: new Date().toISOString(),
     });
@@ -103,7 +109,8 @@ describe('File Store', () => {
       id: 'uuid-2',
       name: 'tender2.pdf',
       size: 2048,
-      type: 'application/pdf',
+      mimeType: 'application/pdf',
+      category: 'tender',
       status: 'ready',
       createdAt: new Date().toISOString(),
     });
@@ -132,7 +139,8 @@ describe('File Store', () => {
       id: 'uuid-1',
       name: 'tender.pdf',
       size: 1024,
-      type: 'application/pdf',
+      mimeType: 'application/pdf',
+      category: 'tender',
       status: 'ready',
       createdAt: new Date().toISOString(),
     });
@@ -150,7 +158,8 @@ describe('File Store', () => {
       id: 'uuid-1',
       name: 'tender.pdf',
       size: 1024,
-      type: 'application/pdf',
+      mimeType: 'application/pdf',
+      category: 'tender',
       status: 'ready',
       createdAt: new Date().toISOString(),
     });

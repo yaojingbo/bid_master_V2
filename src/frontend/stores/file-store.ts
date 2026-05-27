@@ -76,13 +76,14 @@ export const useFileStore = create<FileState>()(
       onRehydrateStorage: () => (state) => {
         if (state && state.files.length > 0) {
           const seen = new Set<string>();
-          const deduped = state.files.filter((f) => {
+          const files = state.files.filter((f) => {
+            if (f.id.startsWith("temp-") || f.status !== "ready") return false;
             if (seen.has(f.id)) return false;
             seen.add(f.id);
             return true;
           });
-          if (deduped.length !== state.files.length) {
-            state.files = deduped;
+          if (files.length !== state.files.length) {
+            state.files = files;
           }
         }
       },

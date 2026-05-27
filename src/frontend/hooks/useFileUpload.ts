@@ -12,7 +12,7 @@ interface UseFileUploadOptions {
 
 export function useFileUpload(options: UseFileUploadOptions = {}) {
   const [uploadingId, setUploadingId] = useState<string | null>(null);
-  const { addFile, updateFileStatus, replaceFileId, setUploading } = useFileStore();
+  const { addFile, removeFile, updateFileStatus, replaceFileId, setUploading } = useFileStore();
 
   const upload = useCallback(async (file: File, category: string = "tender") => {
     const tempId = `temp-${Date.now()}`;
@@ -41,17 +41,17 @@ export function useFileUpload(options: UseFileUploadOptions = {}) {
 
         options.onSuccess?.(realId);
       } else {
-        updateFileStatus(tempId, "error", response.error || "Upload failed");
+        removeFile(tempId);
         options.onError?.(response.error || "Upload failed");
       }
     } catch (error) {
-      updateFileStatus(tempId, "error", String(error));
+      removeFile(tempId);
       options.onError?.(String(error));
     } finally {
       setUploading(false);
       setUploadingId(null);
     }
-  }, [addFile, updateFileStatus, replaceFileId, setUploading, options]);
+  }, [addFile, removeFile, updateFileStatus, replaceFileId, setUploading, options]);
 
   return {
     upload,

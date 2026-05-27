@@ -76,6 +76,9 @@ interface ExtractedElement {
   content: string;
 }
 
+const isRealReadyFile = (file: { id: string; status: string }) =>
+  file.status === 'ready' && !file.id.startsWith('temp-');
+
 export default function ExtractPage() {
   const [activeTab, setActiveTab] = useState('single');
   const [selectedFileId, setSelectedFileId] = useState<string | null>(null);
@@ -139,6 +142,13 @@ export default function ExtractPage() {
     const saved = useTaskStore.getState().extract;
     if (!saved) return;
 
+    if (saved.selectedFileId?.startsWith('temp-')) {
+      useTaskStore.getState().clearExtract();
+      setErrorMessage('文件上传未完成，请重新上传后再提取');
+      setIsStreaming(false);
+      return;
+    }
+
     // 恢复文件选择、Tab 等交互状态
     if (saved.selectedFileId) setSelectedFileId(saved.selectedFileId);
     setActiveTab(saved.activeTab);
@@ -162,6 +172,17 @@ export default function ExtractPage() {
           const res = await authFetch(`/api/extract/result/by-file/${saved.selectedFileId}`, {
             signal: AbortSignal.timeout(5000),
           });
+          if (res.status === 401) {
+            setErrorMessage('登录已失效，请重新登录');
+            setIsStreaming(false);
+            useTaskStore.getState().clearExtract();
+            return;
+          }
+          if (!res.ok) {
+            retryCount++;
+            if (retryCount < maxRetries) setTimeout(poll, 1000);
+            return;
+          }
           const data = await res.json();
           if (data.success && data.data) {
             const content = data.data.content || '';
@@ -244,7 +265,7 @@ export default function ExtractPage() {
       });
   }, [addFile]);
 
-  const displayFiles = files.length > 0 ? files : mockFiles;
+  const displayFiles = (files.length > 0 ? files : mockFiles).filter(isRealReadyFile);
 
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -287,7 +308,7 @@ export default function ExtractPage() {
     );
   };
 
-  const readyFiles = displayFiles.filter(f => f.status === 'ready');
+  const readyFiles = displayFiles;
 
   const resetExtractionState = () => {
     setCurrentPhase(null);
