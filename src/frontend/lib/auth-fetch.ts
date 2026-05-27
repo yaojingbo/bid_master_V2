@@ -2,6 +2,8 @@
  * Auth-aware fetch wrapper.
  * 自动注入 Authorization header，401 时自动 refresh + 重试。
  * 使用单例 refresh 锁防止并发请求同时触发多次 refresh。
+ * 若 accessToken 为空且 authReady 为 false，等待 initAuth 完成后再发请求，
+ * 避免页面刷新时因 token 尚未就绪导致不必要的 401。
  */
 import { useAuthStore } from "@/stores/auth-store";
 import { useLogStore } from "@/stores/log-store";
@@ -10,7 +12,27 @@ const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
 
 let refreshPromise: Promise<string | null> | null = null;
 
+/** 等待 authReady 变为 true（即 initAuth 完成） */
+function waitForAuthReady(): Promise<void> {
+  const { authReady } = useAuthStore.getState();
+  if (authReady) return Promise.resolve();
+  return new Promise((resolve) => {
+    const unsub = useAuthStore.subscribe((state) => {
+      if (state.authReady) {
+        unsub();
+        resolve();
+      }
+    });
+  });
+}
+
 export async function authFetch(url: string, options?: RequestInit): Promise<Response> {
+  // 若 token 尚未就绪，等待 initAuth 完成
+  const { accessToken: initialToken } = useAuthStore.getState();
+  if (!initialToken) {
+    await waitForAuthReady();
+  }
+
   const { accessToken } = useAuthStore.getState();
   const headers = new Headers(options?.headers);
   if (accessToken) {
@@ -77,6 +99,12 @@ export async function authFetch(url: string, options?: RequestInit): Promise<Res
  * SSE 流式请求，使用与 authFetch 相同的代理路径和认证逻辑。
  */
 export async function authFetchSSE(url: string, options?: RequestInit): Promise<Response> {
+  // 若 token 尚未就绪，等待 initAuth 完成
+  const { accessToken: initialToken } = useAuthStore.getState();
+  if (!initialToken) {
+    await waitForAuthReady();
+  }
+
   const { accessToken } = useAuthStore.getState();
   const headers = new Headers(options?.headers);
   if (accessToken) {
