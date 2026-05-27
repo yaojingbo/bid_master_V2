@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useRef, useState } from "react";
+import React, { useCallback, useRef, useState, useId } from "react";
 import { Upload, X, FileText, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -20,6 +20,7 @@ export function FileUploader({
   const [isDragging, setIsDragging] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const inputId = useId();
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -67,44 +68,44 @@ export function FileUploader({
   );
 
   return (
-    <div
-      role="button"
-      tabIndex={0}
-      data-testid="upload-area"
-      className={cn(
-        "border-2 border-dashed rounded-lg p-8 text-center transition-colors cursor-pointer flex flex-col items-center gap-4",
-        isDragging ? "border-primary bg-primary/5" : "hover:border-primary/50",
-        className
-      )}
-      onDragOver={handleDragOver}
-      onDragLeave={handleDragLeave}
-      onDrop={handleDrop}
-      onClick={() => fileInputRef.current?.click()}
-      onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') fileInputRef.current?.click(); }}
-    >
+    <>
       <input
         type="file"
+        id={inputId}
         ref={fileInputRef}
         data-testid="file-input"
         className="file-sr-only"
         accept={accept}
         onChange={handleFileSelect}
       />
-      {isUploading ? (
-        <div className="rounded-full bg-primary/10 p-4">
-          <Loader2 className="h-8 w-8 text-primary animate-spin" />
+      <label
+        htmlFor={inputId}
+        data-testid="upload-area"
+        className={cn(
+          "border-2 border-dashed rounded-lg p-8 text-center transition-colors cursor-pointer flex flex-col items-center gap-4",
+          isDragging ? "border-primary bg-primary/5" : "hover:border-primary/50",
+          className
+        )}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+      >
+        {isUploading ? (
+          <div className="rounded-full bg-primary/10 p-4">
+            <Loader2 className="h-8 w-8 text-primary animate-spin" />
+          </div>
+        ) : (
+          <div className="rounded-full bg-primary/10 p-4">
+            <Upload className="h-8 w-8 text-primary" />
+          </div>
+        )}
+        <div>
+          <p className="text-lg font-medium">点击或拖拽文件到此区域</p>
+          <p className="text-sm text-muted-foreground">
+            支持 PDF、Markdown、Word、Excel（最大 50MB）
+          </p>
         </div>
-      ) : (
-        <div className="rounded-full bg-primary/10 p-4">
-          <Upload className="h-8 w-8 text-primary" />
-        </div>
-      )}
-      <div>
-        <p className="text-lg font-medium">点击或拖拽文件到此区域</p>
-        <p className="text-sm text-muted-foreground">
-          支持 PDF、Markdown、Word、Excel（最大 50MB）
-        </p>
-      </div>
-    </div>
+      </label>
+    </>
   );
 }

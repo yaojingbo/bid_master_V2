@@ -451,9 +451,16 @@ export default function SimulatePage() {
       {/* 创建任务区域 */}
       {!task && (
         <>
-          <div
-            role="button"
-            tabIndex={0}
+          <input
+            type="file"
+            id="simulate-file-input"
+            ref={fileInputRef}
+            className="file-sr-only"
+            accept=".pdf,.md,.doc,.docx"
+            onChange={handleUpload}
+          />
+          <label
+            htmlFor="simulate-file-input"
             className={cn(
               "border-2 border-dashed rounded-xl p-10 text-center transition-colors cursor-pointer flex flex-col items-center gap-4",
               isDragging ? "border-primary bg-primary/5" : "hover:border-primary/50"
@@ -461,16 +468,7 @@ export default function SimulatePage() {
             onDragOver={handleDragOver}
             onDragLeave={handleDragLeave}
             onDrop={handleDrop}
-            onClick={() => fileInputRef.current?.click()}
-            onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') fileInputRef.current?.click(); }}
           >
-            <input
-              type="file"
-              ref={fileInputRef}
-              className="file-sr-only"
-              accept=".pdf,.md,.doc,.docx"
-              onChange={handleUpload}
-            />
             <div className="h-12 w-12 rounded-full bg-primary/10 p-3">
               <Upload className="h-6 w-6 text-primary" />
             </div>
@@ -486,7 +484,7 @@ export default function SimulatePage() {
                 上传中: {uploadingFile}
               </p>
             )}
-          </div>
+          </label>
 
           {/* 文件选择列表 */}
           {files.length > 0 && (
