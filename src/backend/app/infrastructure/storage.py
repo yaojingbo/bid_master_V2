@@ -1,27 +1,22 @@
 from __future__ import annotations
 """
 File storage with encryption support using Fernet.
+文件内容加密后存入 PostgreSQL（BYTEA 列），确保 Railway 部署后数据持久化。
 """
-import os
 import uuid
-import aiofiles
-from pathlib import Path
 from cryptography.fernet import Fernet
-from typing import BinaryIO, Optional
+from typing import Optional
 
 from app.config import get_settings
+from app.infrastructure.pg_storage import get_file_content
 
 
 class StorageService:
-    """File storage service with Fernet encryption."""
+    """File storage service with Fernet encryption, backed by PostgreSQL."""
 
-    def __init__(self, upload_dir: str = None, fernet_key: str = None):
+    def __init__(self, fernet_key: str = None):
         settings = get_settings()
-        self.upload_dir = Path(upload_dir or settings.upload_dir)
         self.fernet_key = fernet_key or settings.fernet_key
-
-        # Ensure upload directory exists
-        self.upload_dir.mkdir(parents=True, exist_ok=True)
 
         # Initialize Fernet cipher
         if self.fernet_key:
@@ -30,36 +25,28 @@ class StorageService:
             # Generate a key for development (NOT for production)
             self.cipher = Fernet(Fernet.generate_key())
 
-    def _get_file_path(self, file_id: str) -> Path:
-        """Get storage path for a file."""
-        return self.upload_dir / f"{file_id}.enc"
-
     async def save(self, content: bytes, original_name: str) -> tuple[str, str]:
         """
-        Save encrypted file and return (file_id, encrypted_path).
+        Encrypt content and return (file_id, placeholder_path).
+
+        实际存储由调用方通过 pg_storage.add_file(..., encrypted_content=...) 写入数据库。
+        这里只负责生成 ID 和加密内容。
 
         Args:
             content: File content bytes
             original_name: Original filename
 
         Returns:
-            Tuple of (file_id, encrypted_path)
+            Tuple of (file_id, placeholder_path)
         """
         file_id = str(uuid.uuid4())
-        file_path = self._get_file_path(file_id)
-
-        # Encrypt content
         encrypted_content = self.cipher.encrypt(content)
-
-        # Write to disk
-        async with aiofiles.open(file_path, 'wb') as f:
-            await f.write(encrypted_content)
-
-        return file_id, str(file_path)
+        # placeholder_path 仅保留兼容性，实际内容在 encrypted_content 列
+        return file_id, f"pg://{file_id}", encrypted_content
 
     async def read(self, file_id: str) -> bytes:
         """
-        Read and decrypt file content.
+        Read and decrypt file content from PostgreSQL.
 
         Args:
             file_id: File identifier
@@ -67,38 +54,29 @@ class StorageService:
         Returns:
             Decrypted file content
         """
-        file_path = self._get_file_path(file_id)
-
-        if not file_path.exists():
+        encrypted_content = await get_file_content(file_id)
+        if encrypted_content is None:
             raise FileNotFoundError(f"File not found: {file_id}")
-
-        # Read encrypted content
-        async with aiofiles.open(file_path, 'rb') as f:
-            encrypted_content = await f.read()
 
         # Decrypt
         return self.cipher.decrypt(encrypted_content)
 
     async def delete(self, file_id: str) -> bool:
         """
-        Delete encrypted file.
+        Delete is handled by pg_storage.delete_file which removes the entire row.
 
         Args:
             file_id: File identifier
 
         Returns:
-            True if deleted, False if not found
+            True (row deletion is handled elsewhere)
         """
-        file_path = self._get_file_path(file_id)
-
-        if file_path.exists():
-            file_path.unlink()
-            return True
-        return False
+        return True
 
     async def exists(self, file_id: str) -> bool:
-        """Check if file exists."""
-        return self._get_file_path(file_id).exists()
+        """Check if file exists in database."""
+        content = await get_file_content(file_id)
+        return content is not None
 
 
 # Global storage instance

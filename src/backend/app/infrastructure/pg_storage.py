@@ -60,7 +60,7 @@ async def get_stats(user_id: str) -> dict:
 # Files
 # ──────────────────────────────────────────────
 
-async def add_file(record: dict, user_id: Optional[str] = None) -> dict:
+async def add_file(record: dict, user_id: Optional[str] = None, encrypted_content: bytes = None) -> dict:
     if "id" not in record:
         record["id"] = _new_id()
     if "created_at" not in record:
@@ -69,11 +69,12 @@ async def add_file(record: dict, user_id: Optional[str] = None) -> dict:
         record["user_id"] = user_id
     db = await get_database()
     await db.execute(
-        """INSERT INTO files (id, original_name, path, size, type, user_id, created_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7)
+        """INSERT INTO files (id, original_name, path, size, type, user_id, encrypted_content, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
            ON CONFLICT (id) DO NOTHING""",
         record["id"], record.get("original_name", ""), record.get("path", ""),
         record.get("size", 0), record.get("type"), record.get("user_id"),
+        encrypted_content,
         _to_dt(record.get("created_at", _now())),
     )
     return record
@@ -128,6 +129,13 @@ async def update_file(file_id: str, updates: dict) -> bool:
         f"UPDATE files SET {', '.join(sets)} WHERE id = ${len(args)}", *args
     )
     return "UPDATE 1" in result
+
+
+async def get_file_content(file_id: str) -> Optional[bytes]:
+    """获取文件的加密内容（BYTEA 列）。"""
+    db = await get_database()
+    row = await db.fetch_one("SELECT encrypted_content FROM files WHERE id = $1", file_id)
+    return row["encrypted_content"] if row and row["encrypted_content"] is not None else None
 
 
 # ──────────────────────────────────────────────

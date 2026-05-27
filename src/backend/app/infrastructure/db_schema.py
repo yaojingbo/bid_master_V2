@@ -49,6 +49,17 @@ CREATE TABLE IF NOT EXISTS users (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- 迁移 3：如果 files 表缺少 encrypted_content 列，添加它
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'files' AND column_name = 'encrypted_content'
+    ) THEN
+        ALTER TABLE files ADD COLUMN encrypted_content BYTEA;
+    END IF;
+END $$;
+
 CREATE TABLE IF NOT EXISTS files (
     id VARCHAR(64) PRIMARY KEY,
     original_name TEXT NOT NULL,
@@ -56,6 +67,7 @@ CREATE TABLE IF NOT EXISTS files (
     size BIGINT DEFAULT 0,
     type VARCHAR(50),
     user_id VARCHAR(64) REFERENCES users(id) ON DELETE CASCADE,
+    encrypted_content BYTEA,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 

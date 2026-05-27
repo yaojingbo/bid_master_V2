@@ -60,7 +60,7 @@ async def upload_file(
             "size": result["size"],
             "type": normalize_file_type(result["name"], result["mime_type"]),
             "created_at": _now(),
-        }, user_id=current_user["id"])
+        }, user_id=current_user["id"], encrypted_content=result["encrypted_content"])
 
         return {
             "success": True,

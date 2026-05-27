@@ -2,9 +2,6 @@ from __future__ import annotations
 """
 File service for handling file uploads, storage, and retrieval.
 """
-import uuid
-from typing import BinaryIO
-
 from app.config import get_settings
 from app.infrastructure.storage import StorageService
 from app.utils.exceptions import FileTooLargeError, UnsupportedFileTypeError
@@ -55,13 +52,13 @@ class FileService:
             category: Document category (tender/bid)
 
         Returns:
-            File metadata including id and path
+            File metadata including id, path, and encrypted_content for DB storage
         """
         # Validate
         self.validate_file(file_content, mime_type)
 
-        # Encrypt and save
-        file_id, encrypted_path = await self.storage.save(file_content, filename)
+        # Encrypt and get content for DB storage
+        file_id, encrypted_path, encrypted_content = await self.storage.save(file_content, filename)
 
         return {
             "id": file_id,
@@ -70,6 +67,7 @@ class FileService:
             "mime_type": mime_type,
             "category": category,
             "encrypted_path": encrypted_path,
+            "encrypted_content": encrypted_content,
             "status": "ready",
         }
 
