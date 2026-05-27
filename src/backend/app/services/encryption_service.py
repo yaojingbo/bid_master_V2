@@ -18,8 +18,8 @@ class EncryptionService:
         if self.key:
             self.fernet = Fernet(self.key.encode() if isinstance(self.key, str) else self.key)
         else:
-            # Generate a key for development (NOT for production)
-            self.fernet = Fernet(Fernet.generate_key())
+            # 从 JWT secret 派生稳定密钥，确保重启后仍可解密
+            self.fernet = Fernet(self.key_from_password(settings.jwt_secret, b"bidmaster-fernet-salt"))
 
     def encrypt(self, data: bytes) -> bytes:
         """
