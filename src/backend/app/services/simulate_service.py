@@ -244,6 +244,8 @@ class SimulateService:
                                 "step_results": {"step1": task.step1_result, "step2": task.step2_result},
                             })
                     asyncio.create_task(_ensure_save())
+                else:
+                    await update_simulate(task_id, {"status": "error", "current_step": 1})
 
     async def run_step3_stream(self, task_id: str, provider: str = "deepseek", user_id: str = None, model: str = None) -> AsyncGenerator[Dict[str, Any], None]:
         """Step 3: 对比（SSE流式）- LLM 在后台 Task 中运行。"""
@@ -330,6 +332,8 @@ class SimulateService:
                                 "step_results": {"step1": task.step1_result, "step2": task.step2_result, "step3": task.step3_result},
                             })
                     asyncio.create_task(_ensure_save())
+                else:
+                    await update_simulate(task_id, {"status": "error", "current_step": 2})
 
     async def run_step4_stream(self, task_id: str, params: dict, provider: str = "deepseek", user_id: str = None, model: str = None) -> AsyncGenerator[Dict[str, Any], None]:
         """Step 4: 编制（SSE流式）- LLM 在后台 Task 中运行。"""
@@ -435,6 +439,8 @@ class SimulateService:
                                 },
                             })
                     asyncio.create_task(_ensure_save())
+                else:
+                    await update_simulate(task_id, {"status": "error", "current_step": 3})
 
 
 # Global instance

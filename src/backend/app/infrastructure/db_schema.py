@@ -60,6 +60,58 @@ BEGIN
     END IF;
 END $$;
 
+-- 迁移 4：simulates.status VARCHAR(20) → VARCHAR(30)
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'simulates' AND column_name = 'status'
+        AND character_maximum_length = 20
+    ) THEN
+        ALTER TABLE simulates ALTER COLUMN status TYPE VARCHAR(30);
+    END IF;
+END $$;
+
+-- 迁移 5：extracts.file_id VARCHAR(64) → TEXT（批量模式存逗号拼接的多文件ID）
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'extracts' AND column_name = 'file_id'
+        AND data_type = 'character varying'
+    ) THEN
+        ALTER TABLE extracts ALTER COLUMN file_id TYPE TEXT;
+    END IF;
+END $$;
+
+-- 迁移 6：extracts 添加 status 列
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'extracts' AND column_name = 'status'
+    ) THEN
+        ALTER TABLE extracts ADD COLUMN status VARCHAR(30) DEFAULT 'completed';
+    END IF;
+END $$;
+
+-- 迁移 7：openings 添加 ai_analysis 和 status 列
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'openings' AND column_name = 'ai_analysis'
+    ) THEN
+        ALTER TABLE openings ADD COLUMN ai_analysis TEXT;
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'openings' AND column_name = 'status'
+    ) THEN
+        ALTER TABLE openings ADD COLUMN status VARCHAR(20) DEFAULT 'completed';
+    END IF;
+END $$;
+
 CREATE TABLE IF NOT EXISTS files (
     id VARCHAR(64) PRIMARY KEY,
     original_name TEXT NOT NULL,
@@ -74,7 +126,7 @@ CREATE TABLE IF NOT EXISTS files (
 CREATE TABLE IF NOT EXISTS simulates (
     task_id VARCHAR(64) PRIMARY KEY,
     name TEXT,
-    status VARCHAR(20) DEFAULT 'pending',
+    status VARCHAR(30) DEFAULT 'pending',
     current_step INT DEFAULT 0,
     params JSONB DEFAULT '{}',
     step_results JSONB DEFAULT '{}',
@@ -94,6 +146,8 @@ CREATE TABLE IF NOT EXISTS openings (
     bidder_count INT DEFAULT 0,
     bid_ranking JSONB DEFAULT '[]',
     bid_stats JSONB DEFAULT '{}',
+    ai_analysis TEXT,
+    status VARCHAR(20) DEFAULT 'completed',
     user_id VARCHAR(64) REFERENCES users(id) ON DELETE CASCADE,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -101,12 +155,13 @@ CREATE TABLE IF NOT EXISTS openings (
 CREATE TABLE IF NOT EXISTS extracts (
     id VARCHAR(64) PRIMARY KEY,
     name TEXT,
-    file_id VARCHAR(64),
+    file_id TEXT,
     file_name TEXT,
     template_type VARCHAR(50),
     mode VARCHAR(20),
     content TEXT,
     elements JSONB DEFAULT '[]',
+    status VARCHAR(30) DEFAULT 'completed',
     user_id VARCHAR(64) REFERENCES users(id) ON DELETE CASCADE,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );

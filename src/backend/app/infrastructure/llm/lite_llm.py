@@ -122,7 +122,7 @@ class LiteLLMService:
             payload["temperature"] = temperature
 
         logger.info("调用 %s API: model=%s, base_url=%s", provider, model_name, base_url)
-        timeout = httpx.Timeout(60.0, connect=10.0)
+        timeout = httpx.Timeout(180.0, connect=10.0)
 
         try:
             async with httpx.AsyncClient(timeout=timeout) as client:

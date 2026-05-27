@@ -249,11 +249,12 @@ async def add_opening(record: dict, user_id: Optional[str] = None) -> dict:
         record["user_id"] = user_id
     db = await get_database()
     await db.execute(
-        """INSERT INTO openings (id, name, file_id, file_name, meta, bidder_count, bid_ranking, bid_stats, user_id, created_at)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT (id) DO NOTHING""",
+        """INSERT INTO openings (id, name, file_id, file_name, meta, bidder_count, bid_ranking, bid_stats, ai_analysis, status, user_id, created_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) ON CONFLICT (id) DO NOTHING""",
         record["id"], record.get("name"), record.get("file_id"), record.get("file_name"),
         json.dumps(record.get("meta", {})), record.get("bidder_count", 0),
         json.dumps(record.get("bid_ranking", [])), json.dumps(record.get("bid_stats", {})),
+        record.get("ai_analysis"), record.get("status", "completed"),
         record.get("user_id"), _to_dt(record.get("created_at", _now())),
     )
     return record
@@ -335,11 +336,12 @@ async def add_extract(record: dict, user_id: Optional[str] = None) -> dict:
         record["user_id"] = user_id
     db = await get_database()
     await db.execute(
-        """INSERT INTO extracts (id, name, file_id, file_name, template_type, mode, content, elements, user_id, created_at)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT (id) DO NOTHING""",
+        """INSERT INTO extracts (id, name, file_id, file_name, template_type, mode, content, elements, status, user_id, created_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT (id) DO NOTHING""",
         record["id"], record.get("name"), record.get("file_id"), record.get("file_name"),
         record.get("template_type"), record.get("mode"), record.get("content"),
-        json.dumps(record.get("elements", [])), record.get("user_id"), _to_dt(record.get("created_at", _now())),
+        json.dumps(record.get("elements", [])), record.get("status", "completed"),
+        record.get("user_id"), _to_dt(record.get("created_at", _now())),
     )
     return record
 
