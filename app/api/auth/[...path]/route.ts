@@ -1,8 +1,8 @@
 /**
  * Auth API 代理路由。
  * Next.js rewrites 不保证转发后端的 Set-Cookie 头，
- * 所以用 API Route 代替——在服务器端读取后端 Set-Cookie，
- * 再由 Next.js 自己设置 cookie 给浏览器。
+ * 所以用 API Route 代替——在服务器端读取后端响应中的 refresh_token，
+ * 再由 Next.js 自己设置 httpOnly cookie 给浏览器。
  */
 import { NextRequest, NextResponse } from "next/server";
 
@@ -14,7 +14,7 @@ const IS_PRODUCTION = process.env.NODE_ENV === "production";
 const REFRESH_COOKIE_MAX_AGE = 7 * 86400; // 7 天
 
 /** 从后端响应中提取 refresh_token 值（兼容不同 Node.js 版本的 header 读取） */
-function extractRefreshToken(headers: Headers): string | null {
+function extractRefreshTokenFromHeaders(headers: Headers): string | null {
   // 优先用 getSetCookie()（Node.js 20+ / undici 5.22+）
   if (typeof headers.getSetCookie === "function") {
     for (const c of headers.getSetCookie()) {
@@ -27,6 +27,14 @@ function extractRefreshToken(headers: Headers): string | null {
   if (raw) {
     const m = raw.match(/refresh_token=([^;]+)/);
     if (m) return m[1];
+  }
+  return null;
+}
+
+/** 从后端 JSON 响应体中提取 refresh_token（最可靠的 fallback） */
+function extractRefreshTokenFromBody(data: Record<string, unknown>): string | null {
+  if (typeof data.refresh_token === "string" && data.refresh_token) {
+    return data.refresh_token;
   }
   return null;
 }
@@ -63,11 +71,19 @@ async function proxyAuthRequest(
 
   const backendRes = await fetch(url, { method, headers: fwdHeaders, body });
   const data = await backendRes.json();
-  const res = NextResponse.json(data, { status: backendRes.status });
 
-  // 登录/注册：从后端 Set-Cookie 提取 refresh_token，在 Next.js 响应中重新设置
+  // 登录/注册：提取 refresh_token 并设置为 httpOnly cookie
   if (action === "login" || action === "register") {
-    const tokenValue = extractRefreshToken(backendRes.headers);
+    // 优先从响应体提取（最可靠），回退到 Set-Cookie header
+    const tokenValue = extractRefreshTokenFromBody(data)
+      || extractRefreshTokenFromHeaders(backendRes.headers);
+
+    // 从响应体中移除 refresh_token，防止暴露给前端 JS
+    const sanitizedData = { ...data };
+    delete sanitizedData.refresh_token;
+
+    const res = NextResponse.json(sanitizedData, { status: backendRes.status });
+
     if (tokenValue) {
       res.cookies.set("refresh_token", tokenValue, {
         httpOnly: true,
@@ -77,9 +93,12 @@ async function proxyAuthRequest(
         maxAge: REFRESH_COOKIE_MAX_AGE,
       });
     } else {
-      console.warn("[auth-proxy] login/register 响应中未找到 refresh_token Set-Cookie");
+      console.error("[auth-proxy] login/register 响应中未找到 refresh_token，无法设置 cookie");
     }
+    return res;
   }
+
+  const res = NextResponse.json(data, { status: backendRes.status });
 
   // logout：清除 refresh_token cookie
   if (action === "logout") {

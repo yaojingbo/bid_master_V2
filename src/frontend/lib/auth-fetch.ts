@@ -60,7 +60,10 @@ export async function authFetch(url: string, options?: RequestInit): Promise<Res
     const { authReady } = useAuthStore.getState();
     if (authReady) {
       useAuthStore.getState().logout();
+      // 等待 logout 请求完成（清除 httpOnly cookie）后再跳转，
+      // 避免 middleware 因残留 refresh_token cookie 导致重定向循环
       if (typeof window !== "undefined") {
+        await fetch("/api/auth/logout", { method: "POST", credentials: "include" }).catch(() => {});
         window.location.href = "/login";
       }
     }
@@ -100,6 +103,7 @@ export async function authFetchSSE(url: string, options?: RequestInit): Promise<
     if (authReady) {
       useAuthStore.getState().logout();
       if (typeof window !== "undefined") {
+        await fetch("/api/auth/logout", { method: "POST", credentials: "include" }).catch(() => {});
         window.location.href = "/login";
       }
     }

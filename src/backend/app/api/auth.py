@@ -111,6 +111,7 @@ async def register(request: RegisterRequest, response: Response):
 
     return {
         "access_token": access_token,
+        "refresh_token": refresh_token,
         "token_type": "bearer",
         "user": {"id": user["id"], "username": user["username"], "email": user.get("email"), "role": user["role"]},
     }
@@ -151,6 +152,7 @@ async def login(request: LoginRequest, response: Response):
 
     return {
         "access_token": access_token,
+        "refresh_token": refresh_token,
         "token_type": "bearer",
         "user": {"id": user["id"], "username": user["username"], "email": user.get("email"), "role": user["role"]},
     }

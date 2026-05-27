@@ -84,7 +84,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
 
   logout: () => {
-    fetch("/api/auth/logout", { method: "POST", credentials: "include" }).catch(() => {});
+    // 先清除客户端可见状态，确保 middleware 不再认为已认证
     clearAuthCookie();
     set({ accessToken: null, user: null, isAuthenticated: false, authReady: true });
     // 清空所有 persist store，防止下一个用户看到当前用户数据
@@ -93,6 +93,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     useTaskStore.getState().clearSimulate();
     useTaskStore.getState().clearStatistics();
     useLogStore.getState().clearLogs();
+    // 最后通知后端清除 httpOnly cookie（fire-and-forget，但 cookie 会通过 Set-Cookie 响应头清除）
+    fetch("/api/auth/logout", { method: "POST", credentials: "include" }).catch(() => {});
   },
 
   refreshAccessToken: async () => {
