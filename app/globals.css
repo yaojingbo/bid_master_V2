@@ -85,10 +85,10 @@ body {
   animation: shimmer 2s ease-in-out infinite;
 }
 
-/* ── 文件输入框隐藏（兼容 label 激活）────────── */
-/* Tailwind v4 的 sr-only 使用 clip-path: inset(50%)
-   Chrome 会拒绝 <label> 对 clip-path 隐藏的 <input type="file"> 的激活转发。
-   此工具类用 opacity:0 替代 clip-path，确保 label 点击能触发文件选择器。 */
+/* ── 文件输入框隐藏（兼容点击激活）────────── */
+/* pointer-events: none 禁止隐藏 input 自身接收点击，
+   所有点击走父容器 onClick → input.click() 的统一路径，
+   避免 Chrome 因原生点击与程序点击冲突而拒绝弹出文件选择器。 */
 @utility file-sr-only {
   position: absolute;
   width: 1px;
@@ -99,4 +99,5 @@ body {
   opacity: 0;
   white-space: nowrap;
   border-width: 0;
+  pointer-events: none;
 }
