@@ -873,10 +873,10 @@ export default function ExtractPage() {
       )}
 
       {/* === 提取要素卡片展示 === */}
-      {extractedElements.length > 0 && (
+      {(extractedElements.length > 0 || (isDone && streamRawText)) && (
         <div className="space-y-4">
           <div className="flex items-center justify-between">
-            <h2 className="text-xl font-semibold">提取结果（{extractedElements.length} 个要素）</h2>
+            <h2 className="text-xl font-semibold">提取结果（{extractedElements.length > 0 ? extractedElements.length : 1} 个要素）</h2>
             <div className="flex items-center gap-2">
               <button
                 onClick={handleCopy}
@@ -898,6 +898,7 @@ export default function ExtractPage() {
           </div>
 
           {/* 结构化卡片 */}
+          {extractedElements.length > 0 && (
           <div className="grid gap-4">
             {extractedElements.map((elem, idx) => (
               <div
@@ -914,6 +915,19 @@ export default function ExtractPage() {
               </div>
             ))}
           </div>
+          )}
+
+          {/* 无结构化要素时显示原始文本 */}
+          {extractedElements.length === 0 && streamRawText && (
+          <div className="rounded-xl border border-border overflow-hidden bg-card">
+            <div className="px-4 py-3 bg-muted border-b border-border">
+              <span className="font-medium text-sm text-foreground">分析结果</span>
+            </div>
+            <div className="p-4 max-h-[600px] overflow-auto">
+              <div className="markdown-body text-sm whitespace-pre-wrap">{streamRawText}</div>
+            </div>
+          </div>
+          )}
         </div>
       )}
 

@@ -281,9 +281,11 @@ class ExtractService:
 
                             for element in found_elements:
                                 yield {"type": "element", "data": element, "phase": "extracting", "percentage": 90}
+                            if not found_elements and full_response.strip():
+                                yield {"type": "element", "data": {"name": "分析结果", "content": full_response.strip()}, "phase": "extracting", "percentage": 90}
                             yield {
                                 "type": "done",
-                                "data": {"summary": "文档分析完成", "elementCount": len(found_elements)},
+                                "data": {"summary": "文档分析完成", "elementCount": max(len(found_elements), 1 if full_response.strip() else 0)},
                                 "phase": "extracting",
                                 "percentage": 100,
                             }
@@ -297,9 +299,11 @@ class ExtractService:
                                 "status": "completed_text",
                             }, user_id=user_id)
                             _saved = True
+                            if full_response.strip():
+                                yield {"type": "element", "data": {"name": "分析结果", "content": full_response.strip()}, "phase": "extracting", "percentage": 90}
                             yield {
                                 "type": "done",
-                                "data": {"summary": "文档分析完成（文本格式）", "elementCount": 0},
+                                "data": {"summary": "文档分析完成（文本格式）", "elementCount": 1 if full_response.strip() else 0},
                             }
                     except json.JSONDecodeError:
                         await add_extract({
@@ -311,9 +315,11 @@ class ExtractService:
                             "status": "completed_json_error",
                         }, user_id=user_id)
                         _saved = True
+                        if full_response.strip():
+                            yield {"type": "element", "data": {"name": "分析结果", "content": full_response.strip()}, "phase": "extracting", "percentage": 90}
                         yield {
                             "type": "done",
-                            "data": {"summary": "文档分析完成，但JSON解析失败", "elementCount": 0},
+                            "data": {"summary": "文档分析完成，但JSON解析失败", "elementCount": 1 if full_response.strip() else 0},
                         }
                     break
                 elif event["type"] == "llm_error":
