@@ -1,10 +1,11 @@
 """
 PostgreSQL schema initialization.
 Executes CREATE TABLE IF NOT EXISTS on startup.
+包含迁移逻辑：检测旧 schema 并自动重建。
 """
 
 SCHEMA_SQL = """
--- 迁移：如果旧表存在 VARCHAR(8) 列，需要重建
+-- 迁移 1：如果 users.id 是 VARCHAR(8)，说明是极旧版本，全部重建
 DO $$
 BEGIN
     IF EXISTS (
@@ -20,6 +21,20 @@ BEGIN
         DROP TABLE IF EXISTS simulates CASCADE;
         DROP TABLE IF EXISTS files CASCADE;
         DROP TABLE IF EXISTS users CASCADE;
+    END IF;
+END $$;
+
+-- 迁移 2：如果 files 表使用旧 schema（file_type 列或缺少 user_id），重建 files 及依赖表
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'files' AND column_name = 'file_type'
+    ) THEN
+        DROP TABLE IF EXISTS extracts CASCADE;
+        DROP TABLE IF EXISTS openings CASCADE;
+        DROP TABLE IF EXISTS simulates CASCADE;
+        DROP TABLE IF EXISTS files CASCADE;
     END IF;
 END $$;
 
@@ -43,8 +58,6 @@ CREATE TABLE IF NOT EXISTS files (
     user_id VARCHAR(64) REFERENCES users(id) ON DELETE CASCADE,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
-
-ALTER TABLE files ALTER COLUMN type TYPE VARCHAR(50);
 
 CREATE TABLE IF NOT EXISTS simulates (
     task_id VARCHAR(64) PRIMARY KEY,
