@@ -26,37 +26,6 @@ from app.config import get_settings
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
-@router.post("/dev-create-user")
-async def dev_create_user(request: Request):
-    """临时开发端点：跳过邮箱验证直接创建用户。生产环境必须移除。"""
-    if not _IS_PRODUCTION:
-        raise HTTPException(status_code=403, detail="仅限生产环境调试")
-    body = await request.json()
-    email = body.get("email")
-    password = body.get("password")
-    username = body.get("username", email.split("@")[0] if email else None)
-    secret = body.get("secret")
-    if secret != get_settings().jwt_secret:
-        raise HTTPException(status_code=403, detail="鉴权失败")
-    if not email or not password:
-        raise HTTPException(status_code=400, detail="缺少 email 或 password")
-    existing = await get_user_by_email(email)
-    if existing:
-        raise HTTPException(status_code=400, detail="该邮箱已被注册")
-    if await get_user_by_username(username):
-        raise HTTPException(status_code=400, detail="用户名已被使用")
-    salt = generate_salt()
-    password_hash = hash_password(password, salt)
-    user = await add_user({
-        "username": username,
-        "email": email,
-        "password_hash": password_hash,
-        "salt": salt.hex(),
-        "role": "user",
-        "is_active": True,
-    })
-    return {"success": True, "user": {"id": user["id"], "username": user["username"], "email": user["email"]}}
-
 _IS_PRODUCTION = os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("RENDER") or os.getenv("FLY_APP_NAME")
 
 
