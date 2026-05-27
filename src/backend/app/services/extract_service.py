@@ -178,7 +178,7 @@ class ExtractService:
                     if (eff_provider, eff_model) != (provider, model):
                         yield {"type": "progress", "message": f"当前模型不支持图片识别，已切换到 {eff_provider}/{eff_model}", "phase": "parsing", "percentage": 13}
 
-                    ocr_text = await ocr_pdf(content, provider, model, user_id)
+                    ocr_text = await ocr_pdf(content, eff_provider, eff_model, user_id)
                     if ocr_text.strip():
                         text_content = ocr_text
                         yield {"type": "progress", "message": f"OCR 识别完成（{len(ocr_text)}字符），正在分析...", "phase": "parsing", "percentage": 20}
@@ -480,7 +480,7 @@ class ExtractService:
                     eff_provider, eff_model = resolve_vision_model(provider, model)
                     if (eff_provider, eff_model) != (provider, model):
                         yield {"type": "progress", "message": f"当前模型不支持图片识别，已切换到 {eff_provider}/{eff_model}"}
-                    ocr_text = await ocr_pdf(content, provider, model, user_id)
+                    ocr_text = await ocr_pdf(content, eff_provider, eff_model, user_id)
                     if ocr_text.strip():
                         text_content = ocr_text
                 except Exception:
