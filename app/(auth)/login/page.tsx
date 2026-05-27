@@ -1,9 +1,10 @@
 "use client";
 
-import { Suspense, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Sparkles, Loader2 } from "lucide-react";
 import { useAuthStore } from "@/stores/auth-store";
+import { saveCredentials, loadCredentials, clearCredentials } from "@/lib/remember-credentials";
 
 function LoginForm() {
   const router = useRouter();
@@ -11,14 +12,29 @@ function LoginForm() {
   const callbackUrl = searchParams.get("callbackUrl") || "/";
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [rememberMe, setRememberMe] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { login, isLoading } = useAuthStore();
+
+  useEffect(() => {
+    const saved = loadCredentials();
+    if (saved) {
+      setEmail(saved.email);
+      setPassword(saved.password);
+      setRememberMe(true);
+    }
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
     try {
       await login(email, password);
+      if (rememberMe) {
+        saveCredentials(email, password);
+      } else {
+        clearCredentials();
+      }
       router.push(callbackUrl);
     } catch (err) {
       setError(err instanceof Error ? err.message : "登录失败");
@@ -67,7 +83,19 @@ function LoginForm() {
             placeholder="输入密码"
             required
           />
-          <div className="mt-1 text-right">
+          <div className="mt-1 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                id="remember-me"
+                checked={rememberMe}
+                onChange={(e) => setRememberMe(e.target.checked)}
+                className="w-4 h-4"
+              />
+              <label htmlFor="remember-me" className="text-xs text-muted-foreground">
+                记住密码
+              </label>
+            </div>
             <a href="/forgot-password" className="text-xs text-muted-foreground hover:text-primary">
               忘记密码？
             </a>

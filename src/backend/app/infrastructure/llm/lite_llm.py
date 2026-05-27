@@ -350,12 +350,12 @@ class LiteLLMService:
             {
                 "id": "dashscope",
                 "name": "阿里百炼",
-                "models": ["qwen-turbo", "qwen-plus", "qwen-max", "qwen-coder-turbo"],
+                "models": ["qwen-turbo", "qwen-plus", "qwen-max", "qwen-coder-turbo", "qwen-vl-max", "qwen-vl-plus"],
             },
             {
                 "id": "zhipu",
                 "name": "智谱 AI",
-                "models": ["glm-4-flash", "glm-4-air", "glm-4-plus", "glm-5.1"],
+                "models": ["glm-4-flash", "glm-4-air", "glm-4-plus", "glm-5.1", "glm-4v", "glm-4v-plus"],
             },
             {
                 "id": "minimax",

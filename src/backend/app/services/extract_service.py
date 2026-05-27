@@ -11,16 +11,20 @@ from app.services.file_service import FileService
 from app.infrastructure.pg_storage import add_extract, get_file
 
 
-def extract_text_from_pdf(content: bytes, max_pages: int = 30) -> str:
-    """从PDF二进制内容中提取文本"""
+def extract_text_from_pdf(content: bytes, max_pages: int = 30) -> tuple[str, bool]:
+    """从PDF二进制内容中提取文本。返回 (文本, 是否需要OCR)。"""
     import pdfplumber
     text = ""
+    page_count = 0
     with pdfplumber.open(io.BytesIO(content)) as pdf:
         for i, page in enumerate(pdf.pages[:max_pages]):
+            page_count += 1
             page_text = page.extract_text()
             if page_text:
                 text += page_text + "\n"
-    return text
+    # 每页平均少于 20 字符，判定为图片型 PDF
+    needs_ocr = page_count > 0 and len(text.strip()) / page_count < 20
+    return text, needs_ocr
 
 
 def extract_text_from_docx(content: bytes) -> str:
@@ -84,8 +88,8 @@ def extract_text_from_xls(content: bytes) -> str:
 _OLE2_MAGIC = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
 
 
-def extract_text_from_content(content: bytes) -> str:
-    """根据文件内容自动判断格式并提取文本（magic bytes 检测）"""
+def extract_text_from_content(content: bytes) -> tuple[str, bool]:
+    """根据文件内容自动判断格式并提取文本（magic bytes 检测）。返回 (文本, 是否需要OCR)。"""
     # PDF
     if content[:4] == b"%PDF":
         return extract_text_from_pdf(content)
@@ -97,29 +101,29 @@ def extract_text_from_content(content: bytes) -> str:
             with zipfile.ZipFile(io.BytesIO(content)) as zf:
                 names = zf.namelist()
                 if any("word/" in n for n in names):
-                    return extract_text_from_docx(content)
+                    return extract_text_from_docx(content), False
                 elif any("xl/" in n for n in names):
-                    return extract_text_from_xlsx(content)
+                    return extract_text_from_xlsx(content), False
         except Exception:
             pass
-        return ""
+        return "", False
 
     # OLE2: XLS
     if content[:8] == _OLE2_MAGIC:
         try:
-            return extract_text_from_xls(content)
+            return extract_text_from_xls(content), False
         except Exception:
             pass
-        return ""
+        return "", False
 
     # Plain text (Markdown, CSV, TXT...)
     for encoding in ["utf-8", "gbk", "gb2312", "latin-1"]:
         try:
-            return content.decode(encoding)
+            return content.decode(encoding), False
         except (UnicodeDecodeError, ValueError):
             continue
 
-    return ""
+    return "", False
 
 
 class ExtractService:
@@ -163,7 +167,25 @@ class ExtractService:
 
             content = await self.file_service.download(document_id)
 
-            text_content = extract_text_from_content(content)
+            text_content, needs_ocr = extract_text_from_content(content)
+
+            # 图片型 PDF：触发 OCR 识别
+            if needs_ocr:
+                yield {"type": "progress", "message": "检测到图片型 PDF，正在启动 OCR 识别...", "phase": "parsing", "percentage": 12}
+                try:
+                    from app.services.ocr_service import ocr_pdf, resolve_vision_model
+                    eff_provider, eff_model = resolve_vision_model(provider, model)
+                    if (eff_provider, eff_model) != (provider, model):
+                        yield {"type": "progress", "message": f"当前模型不支持图片识别，已切换到 {eff_provider}/{eff_model}", "phase": "parsing", "percentage": 13}
+
+                    ocr_text = await ocr_pdf(content, provider, model, user_id)
+                    if ocr_text.strip():
+                        text_content = ocr_text
+                        yield {"type": "progress", "message": f"OCR 识别完成（{len(ocr_text)}字符），正在分析...", "phase": "parsing", "percentage": 20}
+                    else:
+                        yield {"type": "progress", "message": "OCR 未识别到文字，使用原始提取结果", "phase": "parsing", "percentage": 20}
+                except Exception as e:
+                    yield {"type": "progress", "message": f"OCR 识别失败（{str(e)[:80]}），使用原始提取结果", "phase": "parsing", "percentage": 20}
 
             if not text_content.strip():
                 yield {"type": "error", "data": {"message": "文档内容为空或无法解析"}}
@@ -384,7 +406,7 @@ class ExtractService:
             async def fetch_and_parse(fid: str) -> tuple[str, str]:
                 try:
                     content = await self.file_service.download(fid)
-                    text = extract_text_from_content(content)
+                    text, _ = extract_text_from_content(content)
                     return fid, text
                 except Exception as e:
                     return fid, f"[读取失败: {e}]"
@@ -448,7 +470,21 @@ class ExtractService:
             yield {"type": "progress", "message": "正在读取招标文件..."}
 
             content = await self.file_service.download(file_id)
-            text_content = extract_text_from_content(content)
+            text_content, needs_ocr = extract_text_from_content(content)
+
+            # 图片型 PDF：触发 OCR 识别
+            if needs_ocr:
+                yield {"type": "progress", "message": "检测到图片型 PDF，正在启动 OCR 识别..."}
+                try:
+                    from app.services.ocr_service import ocr_pdf, resolve_vision_model
+                    eff_provider, eff_model = resolve_vision_model(provider, model)
+                    if (eff_provider, eff_model) != (provider, model):
+                        yield {"type": "progress", "message": f"当前模型不支持图片识别，已切换到 {eff_provider}/{eff_model}"}
+                    ocr_text = await ocr_pdf(content, provider, model, user_id)
+                    if ocr_text.strip():
+                        text_content = ocr_text
+                except Exception:
+                    pass  # OCR 失败不影响主流程
 
             if not text_content.strip():
                 yield {"type": "error", "data": {"message": "文档内容为空或无法解析"}}
