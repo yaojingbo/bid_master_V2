@@ -600,7 +600,9 @@ export default function StatisticsPage() {
       <PageHeader title="开标分析" description="智能解析开标一览表，自动计算报价排名、降价幅度、离散系数" />
 
       {/* 文件上传 */}
-      <label
+      <div
+        role="button"
+        tabIndex={0}
         className={cn(
           "border-2 border-dashed rounded-xl p-10 text-center transition-colors cursor-pointer flex flex-col items-center gap-4",
           isDragging ? "border-primary bg-primary/5" : "hover:border-primary/50"
@@ -608,6 +610,8 @@ export default function StatisticsPage() {
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
+        onClick={() => fileInputRef.current?.click()}
+        onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') fileInputRef.current?.click(); }}
       >
         <input
           type="file"
@@ -631,7 +635,7 @@ export default function StatisticsPage() {
             已选择: {uploadedFile.name}
           </p>
         )}
-      </label>
+      </div>
 
       {/* 列选择：勾选后直接分析 */}
       {uploadedFile && rawHeaders.length > 0 && !result && (

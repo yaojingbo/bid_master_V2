@@ -67,7 +67,9 @@ export function FileUploader({
   );
 
   return (
-    <label
+    <div
+      role="button"
+      tabIndex={0}
       data-testid="upload-area"
       className={cn(
         "border-2 border-dashed rounded-lg p-8 text-center transition-colors cursor-pointer flex flex-col items-center gap-4",
@@ -77,6 +79,8 @@ export function FileUploader({
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
+      onClick={() => fileInputRef.current?.click()}
+      onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') fileInputRef.current?.click(); }}
     >
       <input
         type="file"
@@ -101,6 +105,6 @@ export function FileUploader({
           支持 PDF、Markdown、Word、Excel（最大 50MB）
         </p>
       </div>
-    </label>
+    </div>
   );
 }

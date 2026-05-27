@@ -451,7 +451,9 @@ export default function SimulatePage() {
       {/* 创建任务区域 */}
       {!task && (
         <>
-          <label
+          <div
+            role="button"
+            tabIndex={0}
             className={cn(
               "border-2 border-dashed rounded-xl p-10 text-center transition-colors cursor-pointer flex flex-col items-center gap-4",
               isDragging ? "border-primary bg-primary/5" : "hover:border-primary/50"
@@ -459,6 +461,8 @@ export default function SimulatePage() {
             onDragOver={handleDragOver}
             onDragLeave={handleDragLeave}
             onDrop={handleDrop}
+            onClick={() => fileInputRef.current?.click()}
+            onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') fileInputRef.current?.click(); }}
           >
             <input
               type="file"
@@ -482,7 +486,7 @@ export default function SimulatePage() {
                 上传中: {uploadingFile}
               </p>
             )}
-          </label>
+          </div>
 
           {/* 文件选择列表 */}
           {files.length > 0 && (

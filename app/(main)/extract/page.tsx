@@ -544,7 +544,9 @@ export default function ExtractPage() {
       <TabNavigation tabs={tabs} activeTab={activeTab} onTabChange={setActiveTab} />
 
       {/* 上传区域 */}
-      <label
+      <div
+        role="button"
+        tabIndex={0}
         className={cn(
           'border-2 border-dashed rounded-xl p-10 text-center transition-colors cursor-pointer flex flex-col items-center gap-4',
           isDragging ? 'border-primary bg-primary/5' : 'hover:border-primary/50'
@@ -552,6 +554,8 @@ export default function ExtractPage() {
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
+        onClick={() => fileInputRef.current?.click()}
+        onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') fileInputRef.current?.click(); }}
       >
         <input
           type="file"
@@ -570,7 +574,7 @@ export default function ExtractPage() {
             支持 PDF、Markdown、Word、Excel（最大 50MB）
           </p>
         </div>
-      </label>
+      </div>
 
       {/* 文件列表 + 选项区 分栏布局（单文件提取模式） */}
       {activeTab === 'single' && displayFiles.length > 0 && (
