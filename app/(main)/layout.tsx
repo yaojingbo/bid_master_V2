@@ -32,6 +32,15 @@ export default function MainLayout({
     }
   }, [authReady, isAuthenticated, pathname, router]);
 
+  // authReady 为 false 时不渲染子页面，避免 accessToken 为 null 导致请求 401
+  if (!authReady) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background">
+        <div className="animate-pulse text-muted-foreground">加载中...</div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex min-h-screen bg-background">
       <Sidebar />
