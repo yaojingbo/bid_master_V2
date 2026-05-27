@@ -20,7 +20,11 @@ export default function MainLayout({
   useEffect(() => {
     if (initialized.current) return;
     initialized.current = true;
-    initAuth();
+    // authReady 已为 true 说明刚完成 login/register，无需再 initAuth
+    // 否则 initAuth 若偶发失败会覆盖 isAuthenticated=false 并清除 cookie，导致导航被重定向
+    if (!useAuthStore.getState().authReady) {
+      initAuth();
+    }
   }, [initAuth]);
 
   // initAuth 完成后，若用户未认证且在受保护路由，客户端侧回退重定向
