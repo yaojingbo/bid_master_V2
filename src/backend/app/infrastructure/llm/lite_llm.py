@@ -152,7 +152,12 @@ class LiteLLMService:
                                         err_msg = str(err_detail)
                                     logger.error("API 流式错误 (%s): %s", provider, err_msg)
                                     raise RuntimeError(f"{provider} API 错误: {err_msg}")
-                                content = chunk.get("choices", [{}])[0].get("delta", {}).get("content", "")
+                                choices = chunk.get("choices", [])
+                                if not choices:
+                                    continue
+                                delta = choices[0].get("delta", {})
+                                # qwen3.x 思考模式：跳过 reasoning_content，只输出 content
+                                content = delta.get("content", "")
                                 if content:
                                     if "<think>" in content:
                                         in_think = True
@@ -178,7 +183,13 @@ class LiteLLMService:
                         raise RuntimeError(error_msg)
 
                     result = response.json()
-                    content = result.get("choices", [{}])[0].get("message", {}).get("content", "")
+                    choices = result.get("choices", [])
+                    if not choices:
+                        yield ""
+                        return
+                    msg = choices[0].get("message", {})
+                    # qwen3.x 思考模式：优先取 content，忽略 reasoning_content
+                    content = msg.get("content", "")
                     yield content
 
         except httpx.TimeoutException:
@@ -266,6 +277,8 @@ class LiteLLMService:
             if stream:
                 in_think = False
                 async for chunk in response:
+                    if not chunk.choices:
+                        continue
                     content = chunk.choices[0].delta.content
                     if content:
                         if "<think>" in content:
@@ -284,7 +297,7 @@ class LiteLLMService:
                             continue
                         yield content
             else:
-                yield response.choices[0].message.content
+                yield response.choices[0].message.content if response.choices else ""
 
         except Exception as e:
             _add_log("error", "llm_call", f"{provider} 调用失败: {str(e)[:200]}", user_id=user_id)
