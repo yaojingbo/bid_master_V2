@@ -22,7 +22,7 @@ class LiteLLMService:
         "openai": "openai/gpt-4o",
         "deepseek": "deepseek/deepseek-chat",
         "claude": "anthropic/claude-sonnet-4-20250514",
-        "dashscope": "openai/qwen-turbo",
+        "dashscope": "openai/qwen3.6-plus",
         "zhipu": "openai/glm-4-flash",
         "minimax": "openai/MiniMax-M2.7",
         "ollama": "ollama/llama3",
@@ -352,7 +352,11 @@ class LiteLLMService:
             {
                 "id": "dashscope",
                 "name": "阿里百炼",
-                "models": ["qwen-turbo", "qwen-plus", "qwen-max", "qwen-coder-turbo", "qwen-vl-ocr", "qwen3-vl-plus", "qwen-vl-plus", "qwen-vl-max"],
+                "models": [
+                    "qwen3.7-max", "qwen3.6-plus", "qwen3.6-flash",
+                    "qwen-max", "qwen-plus", "qwen-turbo", "qwen-coder-turbo",
+                    "qwen-vl-ocr", "qwen3-vl-plus", "qwen-vl-plus", "qwen-vl-max",
+                ],
             },
             {
                 "id": "zhipu",
