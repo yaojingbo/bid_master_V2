@@ -587,6 +587,9 @@ async def analyze_opening_upload(
         parsed = parse_opening_excel(content, file.filename)
 
         module_list = json.loads(modules) if modules else None
+        # 兼容逗号分隔格式（如 "bid_ranking,discount,statistics"）
+        if module_list is None and modules:
+            module_list = [m.strip() for m in modules.split(",") if m.strip()]
         result = compute_all_dimensions(parsed["bidders"], parsed["meta"], module_list)
 
         # 保存开标结果到 mock_storage
@@ -760,6 +763,9 @@ async def analyze_comprehensive_upload(
         parsed = parse_opening_excel(content, file.filename)
 
         module_list = json.loads(modules) if modules else None
+        # 兼容逗号分隔格式（如 "bid_ranking,discount,statistics"）
+        if module_list is None and modules:
+            module_list = [m.strip() for m in modules.split(",") if m.strip()]
         analysis_data = compute_all_dimensions(parsed["bidders"], parsed["meta"], module_list)
 
         return EventSourceResponse(
@@ -855,6 +861,9 @@ async def start_comprehensive_analysis_upload(
         content = await file.read()
         parsed = parse_opening_excel(content, file.filename)
         module_list = json.loads(modules) if modules else None
+        # 兼容逗号分隔格式（如 "bid_ranking,discount,statistics"）
+        if module_list is None and modules:
+            module_list = [m.strip() for m in modules.split(",") if m.strip()]
         analysis_data = compute_all_dimensions(parsed["bidders"], parsed["meta"], module_list)
 
         task_id = str(uuid.uuid4())[:8]
