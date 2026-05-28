@@ -42,8 +42,11 @@ async def list_keys(user: dict = Depends(get_current_user)):
 @router.post("")
 async def save_key(request: ApiKeySaveRequest, user: dict = Depends(get_current_user)):
     """保存或更新一个 API Key。明文传入，Fernet 加密后存储。"""
+    api_key = request.api_key.strip()
+    if not api_key:
+        raise HTTPException(status_code=400, detail="API Key 不能为空")
     enc_service = get_encryption_service()
-    encrypted = enc_service.encrypt(request.api_key.encode()).decode()
+    encrypted = enc_service.encrypt(api_key.encode()).decode()
     await save_api_key(user["id"], request.provider, encrypted)
     return {"success": True, "message": f"API Key for {request.provider} 已保存"}
 
