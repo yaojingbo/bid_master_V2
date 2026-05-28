@@ -586,8 +586,10 @@ async def analyze_opening_upload(
         content = await file.read()
         parsed = parse_opening_excel(content, file.filename)
 
-        module_list = json.loads(modules) if modules else None
-        # 兼容逗号分隔格式（如 "bid_ranking,discount,statistics"）
+        try:
+            module_list = json.loads(modules) if modules else None
+        except (json.JSONDecodeError, ValueError):
+            module_list = None
         if module_list is None and modules:
             module_list = [m.strip() for m in modules.split(",") if m.strip()]
         result = compute_all_dimensions(parsed["bidders"], parsed["meta"], module_list)
@@ -762,8 +764,10 @@ async def analyze_comprehensive_upload(
         content = await file.read()
         parsed = parse_opening_excel(content, file.filename)
 
-        module_list = json.loads(modules) if modules else None
-        # 兼容逗号分隔格式（如 "bid_ranking,discount,statistics"）
+        try:
+            module_list = json.loads(modules) if modules else None
+        except (json.JSONDecodeError, ValueError):
+            module_list = None
         if module_list is None and modules:
             module_list = [m.strip() for m in modules.split(",") if m.strip()]
         analysis_data = compute_all_dimensions(parsed["bidders"], parsed["meta"], module_list)
@@ -860,8 +864,10 @@ async def start_comprehensive_analysis_upload(
     try:
         content = await file.read()
         parsed = parse_opening_excel(content, file.filename)
-        module_list = json.loads(modules) if modules else None
-        # 兼容逗号分隔格式（如 "bid_ranking,discount,statistics"）
+        try:
+            module_list = json.loads(modules) if modules else None
+        except (json.JSONDecodeError, ValueError):
+            module_list = None
         if module_list is None and modules:
             module_list = [m.strip() for m in modules.split(",") if m.strip()]
         analysis_data = compute_all_dimensions(parsed["bidders"], parsed["meta"], module_list)
