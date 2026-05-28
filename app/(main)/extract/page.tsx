@@ -174,7 +174,7 @@ export default function ExtractPage() {
       const poll = async () => {
         try {
           const res = await authFetch(`/api/extract/result/by-file/${saved.selectedFileId}`, {
-            signal: AbortSignal.timeout(5000),
+            signal: AbortSignal.timeout(15000),
           });
           if (res.status === 401) {
             setErrorMessage('登录已失效，请重新登录');
