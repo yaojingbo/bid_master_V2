@@ -75,7 +75,7 @@ export default function HomePage() {
 
       <div className="grid grid-cols-3 gap-6">
         {[
-          { label: "AI 模型", value: "100+", icon: Brain },
+          { label: "AI 模型", value: "AI大模型+", icon: Brain },
           { label: "文件格式", value: "6 种", icon: Shield },
           { label: "平均响应", value: "~10s", icon: Zap },
         ].map((s) => (

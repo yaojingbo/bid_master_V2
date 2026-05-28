@@ -293,23 +293,23 @@ export default function SettingsPage() {
                 activeProvider === provider.id && "bg-primary/5"
               )}
             >
-              <div className="flex items-center gap-4">
+              <div className="flex items-center gap-4 min-w-0">
                 <div
                   className={cn(
-                    "w-4 h-4 rounded-full border-2",
+                    "w-4 h-4 rounded-full border-2 shrink-0",
                     activeProvider === provider.id
                       ? "border-primary bg-primary"
                       : "border-muted"
                   )}
                 />
-                <div>
+                <div className="min-w-0">
                   <p className="font-medium">{provider.name}</p>
-                  <p className="text-sm text-muted-foreground">
+                  <p className="text-sm text-muted-foreground truncate">
                     {provider.models.join(", ")}
                   </p>
                 </div>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 shrink-0">
                 <button
                   onClick={() => handleTest(provider.id)}
                   disabled={testingProvider !== null}
