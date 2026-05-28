@@ -247,8 +247,10 @@ export default function ExtractPage() {
   useEffect(() => {
     listFiles({ page: 1, page_size: 50 })
       .then(res => {
+        const backendIds: string[] = [];
         // 将后端文件同步到 fileStore（用于 extract 页面选择文件）
         for (const f of res.files) {
+          backendIds.push(f.id);
           addFile({
             id: f.id,
             name: f.original_name,
@@ -259,6 +261,8 @@ export default function ExtractPage() {
             createdAt: f.created_at || new Date().toISOString(),
           });
         }
+        // 清除后端已不存在的文件（可能从数据库页删除了）
+        useFileStore.getState().syncWithBackend(backendIds);
       })
       .catch(() => {
         /* 静默失败，显示空列表 */

@@ -28,6 +28,7 @@ interface FileState {
   replaceFileId: (oldId: string, newId: string) => void;
   setUploading: (isUploading: boolean, progress?: number) => void;
   clearFiles: () => void;
+  syncWithBackend: (backendIds: string[]) => void;
 }
 
 export const useFileStore = create<FileState>()(
@@ -69,6 +70,10 @@ export const useFileStore = create<FileState>()(
         files: [],
         isUploading: false,
         uploadProgress: 0,
+      })),
+
+      syncWithBackend: (backendIds) => set((state) => ({
+        files: state.files.filter((f) => backendIds.includes(f.id)),
       })),
     }),
     {

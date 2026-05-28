@@ -31,6 +31,7 @@ import {
   deleteExtract as apiDeleteExtract,
   batchDownloadFiles,
 } from "@/lib/data-api";
+import { useFileStore } from "@/stores/file-store";
 import type {
   DataStats,
   FileRecord,
@@ -318,6 +319,7 @@ export default function DatabasePage() {
   const handleDeleteFile = async (id: string) => {
     try {
       await apiDeleteFile(id);
+      useFileStore.getState().removeFile(id);
       fetchFiles(filesPage);
       loadStats();
     } catch (err) {
