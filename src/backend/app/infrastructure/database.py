@@ -41,7 +41,7 @@ class Database:
     async def connect(self) -> None:
         if self._pool:
             return
-        kwargs: dict = {"min_size": 2, "max_size": 10}
+        kwargs: dict = {"min_size": 0, "max_size": 10, "max_inactive_connection_lifetime": 120}
         if self._needs_ssl:
             ctx = ssl.create_default_context()
             ctx.check_hostname = False
@@ -63,20 +63,37 @@ class Database:
             raise RuntimeError("Database not connected. Call await db.connect() first.")
         return self._pool
 
+    async def _retry(self, fn, *args, retries=2):
+        """执行数据库操作，连接断开时重连重试。"""
+        for attempt in range(retries + 1):
+            try:
+                return await fn(*args)
+            except (ConnectionError, asyncpg.PostgresConnectionError, OSError) as e:
+                if attempt < retries:
+                    self._pool = None
+                    await self.connect()
+                else:
+                    raise
+
     async def fetch_one(self, query: str, *args) -> dict | None:
-        async with self.pool.acquire() as conn:
-            row = await conn.fetchrow(query, *args)
-            return dict(row) if row else None
+        async def _do():
+            async with self.pool.acquire() as conn:
+                row = await conn.fetchrow(query, *args)
+                return dict(row) if row else None
+        return await self._retry(_do)
 
     async def fetch_all(self, query: str, *args) -> list[dict]:
-        async with self.pool.acquire() as conn:
-            rows = await conn.fetch(query, *args)
-            return [dict(r) for r in rows]
+        async def _do():
+            async with self.pool.acquire() as conn:
+                rows = await conn.fetch(query, *args)
+                return [dict(r) for r in rows]
+        return await self._retry(_do)
 
     async def execute(self, query: str, *args) -> str:
-        async with self.pool.acquire() as conn:
-            result = await conn.execute(query, *args)
-            return result
+        async def _do():
+            async with self.pool.acquire() as conn:
+                return await conn.execute(query, *args)
+        return await self._retry(_do)
 
 
 # Global instance (lazy, only created when needed)
