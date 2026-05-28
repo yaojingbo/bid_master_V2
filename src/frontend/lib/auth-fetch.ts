@@ -112,8 +112,31 @@ export async function authFetchSSE(url: string, options?: RequestInit): Promise<
   }
 
   const fullUrl = url.startsWith("/") ? `${API_BASE}${url}` : url;
+  const method = options?.method || "GET";
+  const shortUrl = url.startsWith("/") ? url : new URL(url).pathname;
 
-  const response = await fetch(fullUrl, { ...options, headers, credentials: "include" });
+  let response: Response;
+  try {
+    response = await fetch(fullUrl, { ...options, headers, credentials: "include" });
+  } catch (err) {
+    useLogStore.getState().addLog({
+      level: "error",
+      category: "api_call",
+      message: `${method} ${shortUrl} 网络错误`,
+      detail: err instanceof Error ? err.message : String(err),
+    });
+    throw err;
+  }
+
+  if (response.status >= 400 && response.status !== 401) {
+    const body = await response.clone().text().catch(() => "");
+    useLogStore.getState().addLog({
+      level: "error",
+      category: "api_call",
+      message: `${method} ${shortUrl} ${response.status}`,
+      detail: body.slice(0, 500),
+    });
+  }
 
   if (response.status === 401) {
     if (!refreshPromise) {

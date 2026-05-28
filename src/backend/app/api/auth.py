@@ -162,17 +162,26 @@ async def login(request: LoginRequest, response: Response):
 @router.post("/refresh")
 async def refresh(request: Request):
     """用 httpOnly cookie 中的 refresh_token 获取新的 access_token。"""
+    import logging
+    _log = logging.getLogger(__name__)
+
     refresh_token = request.cookies.get("refresh_token")
     if not refresh_token:
+        _log.warning("auth refresh 失败: cookie 中缺少 refresh_token (cookies=%s)", list(request.cookies.keys()))
         raise HTTPException(status_code=401, detail="缺少 refresh token")
 
     payload = decode_token(refresh_token, get_settings().jwt_secret)
-    if not payload or payload.get("type") != "refresh":
+    if not payload:
+        _log.warning("auth refresh 失败: refresh_token 解码失败（可能已过期）")
+        raise HTTPException(status_code=401, detail="无效或已过期的 refresh token")
+    if payload.get("type") != "refresh":
+        _log.warning("auth refresh 失败: token 类型错误 (type=%s)", payload.get("type"))
         raise HTTPException(status_code=401, detail="无效的 refresh token")
 
     user_id = payload.get("sub")
     user = await get_user_by_id(user_id)
     if not user or not user.get("is_active"):
+        _log.warning("auth refresh 失败: 用户不存在或已禁用 (sub=%s)", user_id)
         raise HTTPException(status_code=401, detail="用户不存在或已禁用")
 
     settings = get_settings()
