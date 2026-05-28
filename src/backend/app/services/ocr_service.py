@@ -18,12 +18,15 @@ logger = logging.getLogger(__name__)
 VISION_MODELS: dict[str, list[str]] = {
     "openai": ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo"],
     "claude": ["claude-sonnet-4-20250514", "claude-opus-4-5-20251101"],
-    "dashscope": ["qwen-vl-ocr", "qwen3-vl-plus", "qwen-vl-plus", "qwen-vl-max"],
+    "dashscope": [
+        "qwen3.7-max", "qwen3.6-plus", "qwen3.6-flash",
+        "qwen-vl-ocr", "qwen3-vl-plus", "qwen-vl-plus", "qwen-vl-max",
+    ],
     "zhipu": ["glm-4v-plus", "glm-4v"],
     "ollama": ["llava", "bakllava"],
 }
 
-# 不支持 vision 的供应商
+# 不支持 vision 的供应商（仅文本模型）
 _NO_VISION_PROVIDERS = {"deepseek", "minimax"}
 
 # OCR 最大页数（控制 token 消耗）
@@ -39,8 +42,9 @@ def is_vision_capable(provider: str, model: str = None) -> bool:
     models = VISION_MODELS.get(provider, [])
     if model in models:
         return True
-    # 宽松匹配：模型名含 vl / vision / ocr / 4o / glm-4v 等关键词
-    keywords = ["vl", "vision", "ocr", "4o", "4v", "llava", "bakllava"]
+    # 宽松匹配：模型名含多模态相关关键词
+    # qwen3.x/qwen3.x-plus 等百炼新模型均为多模态，通过 qwen3/qwen4 匹配
+    keywords = ["vl", "vision", "ocr", "4o", "4v", "llava", "bakllava", "qwen3", "qwen4"]
     model_lower = model.lower()
     return any(kw in model_lower for kw in keywords)
 
