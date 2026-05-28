@@ -3,12 +3,15 @@ from __future__ import annotations
 Extract service for document element extraction using LLM.
 """
 import io
+import logging
 from typing import AsyncGenerator, Dict, Any, Optional
 import json
 
 from app.services.llm_service import LLMService
 from app.services.file_service import FileService
 from app.infrastructure.pg_storage import add_extract, get_file
+
+logger = logging.getLogger(__name__)
 
 
 def extract_text_from_pdf(content: bytes, max_pages: int = 30) -> tuple[str, bool]:
@@ -23,7 +26,9 @@ def extract_text_from_pdf(content: bytes, max_pages: int = 30) -> tuple[str, boo
             if page_text:
                 text += page_text + "\n"
     # 每页平均少于 20 字符，判定为图片型 PDF
-    needs_ocr = page_count > 0 and len(text.strip()) / page_count < 20
+    avg_chars = len(text.strip()) / page_count if page_count > 0 else 0
+    needs_ocr = page_count > 0 and avg_chars < 20
+    logger.info("PDF 文本提取: %d 页, 平均 %.1f 字符/页, needs_ocr=%s", page_count, avg_chars, needs_ocr)
     return text, needs_ocr
 
 
@@ -171,14 +176,17 @@ class ExtractService:
 
             # 图片型 PDF：触发 OCR 识别
             if needs_ocr:
+                logger.info("触发 OCR: document_id=%s, provider=%s, model=%s", document_id, provider, model)
                 yield {"type": "progress", "message": "检测到图片型 PDF，正在启动 OCR 识别...", "phase": "parsing", "percentage": 12}
                 try:
                     from app.services.ocr_service import ocr_pdf, resolve_vision_model
                     eff_provider, eff_model = resolve_vision_model(provider, model)
                     if (eff_provider, eff_model) != (provider, model):
+                        logger.info("OCR 模型回退: %s/%s → %s/%s", provider, model, eff_provider, eff_model)
                         yield {"type": "progress", "message": f"当前模型不支持图片识别，已切换到 {eff_provider}/{eff_model}", "phase": "parsing", "percentage": 13}
 
                     ocr_text = await ocr_pdf(content, eff_provider, eff_model, user_id)
+                    logger.info("OCR 完成: %d 字符", len(ocr_text))
                     if ocr_text.strip():
                         text_content = ocr_text
                         yield {"type": "progress", "message": f"OCR 识别完成（{len(ocr_text)}字符），正在分析...", "phase": "parsing", "percentage": 20}
@@ -474,13 +482,16 @@ class ExtractService:
 
             # 图片型 PDF：触发 OCR 识别
             if needs_ocr:
+                logger.info("门槛分析触发 OCR: file_id=%s, provider=%s", file_id, provider)
                 yield {"type": "progress", "message": "检测到图片型 PDF，正在启动 OCR 识别..."}
                 try:
                     from app.services.ocr_service import ocr_pdf, resolve_vision_model
                     eff_provider, eff_model = resolve_vision_model(provider, model)
                     if (eff_provider, eff_model) != (provider, model):
+                        logger.info("OCR 模型回退: %s/%s → %s/%s", provider, model, eff_provider, eff_model)
                         yield {"type": "progress", "message": f"当前模型不支持图片识别，已切换到 {eff_provider}/{eff_model}"}
                     ocr_text = await ocr_pdf(content, eff_provider, eff_model, user_id)
+                    logger.info("OCR 完成: %d 字符", len(ocr_text))
                     if ocr_text.strip():
                         text_content = ocr_text
                 except Exception:

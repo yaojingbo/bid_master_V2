@@ -405,24 +405,41 @@ export default function ExtractPage() {
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
+      let receivedDone = false;
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
 
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
 
-        for (const line of lines) {
-          if (!line.startsWith('data: ')) continue;
-          try {
-            const event = JSON.parse(line.slice(6));
-            processSSEEvent(event);
-          } catch {
-            // 跳过无法解析的行
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue;
+            try {
+              const event = JSON.parse(line.slice(6));
+              if (event.type === 'done') receivedDone = true;
+              processSSEEvent(event);
+            } catch {
+              // 跳过无法解析的行
+            }
           }
         }
+      } catch {
+        // SSE 流中断（Vercel 超时等），不设为错误，后端会保存结果
+        if (!receivedDone) {
+          setProgressMessage('连接中断，AI 可能在后台继续处理，请稍后刷新查看结果');
+          setIsStreaming(false);
+        }
+        return;
+      }
+
+      // 流正常结束但没有收到 done 事件
+      if (!receivedDone) {
+        setProgressMessage('分析可能尚未完成，请稍后刷新查看结果');
+        setIsStreaming(false);
       }
     },
     [processSSEEvent]
