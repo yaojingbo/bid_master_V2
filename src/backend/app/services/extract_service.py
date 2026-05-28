@@ -25,10 +25,11 @@ def extract_text_from_pdf(content: bytes, max_pages: int = 30) -> tuple[str, boo
             page_text = page.extract_text()
             if page_text:
                 text += page_text + "\n"
-    # 每页平均少于 20 字符，判定为图片型 PDF
-    avg_chars = len(text.strip()) / page_count if page_count > 0 else 0
-    needs_ocr = page_count > 0 and avg_chars < 20
-    logger.info("PDF 文本提取: %d 页, 平均 %.1f 字符/页, needs_ocr=%s", page_count, avg_chars, needs_ocr)
+    # 仅当 pdfplumber 几乎无法提取文本时才判定为图片型 PDF
+    # 阈值：总文本 < 100 字符（纯扫描件通常为 0，正常 PDF 即使有封面页也远超 100）
+    total_chars = len(text.strip())
+    needs_ocr = page_count > 0 and total_chars < 100
+    logger.info("PDF 文本提取: %d 页, %d 字符, needs_ocr=%s", page_count, total_chars, needs_ocr)
     return text, needs_ocr
 
 

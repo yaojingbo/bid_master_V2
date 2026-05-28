@@ -167,7 +167,12 @@ async def ocr_pdf(
             if response_text.strip():
                 all_text.append(f"--- 第 {page_num} 页 ---\n{response_text.strip()}")
         except Exception as e:
+            err_msg = str(e)
             logger.warning("OCR 第 %d 页失败: %s", page_num, e)
-            all_text.append(f"--- 第 {page_num} 页 ---\n[OCR 识别失败: {str(e)[:80]}]")
+            # 401/403 认证错误：API Key 无权限，继续重试其他页也无意义，立即终止
+            if "401" in err_msg or "403" in err_msg or "API key" in err_msg.lower() or "Incorrect" in err_msg:
+                logger.error("OCR 认证失败，终止剩余页面识别: %s", err_msg[:200])
+                raise RuntimeError(f"视觉模型 {effective_provider}/{effective_model} 认证失败，请确认 API Key 有该模型权限")
+            all_text.append(f"--- 第 {page_num} 页 ---\n[OCR 识别失败: {err_msg[:80]}]")
 
     return "\n\n".join(all_text)
