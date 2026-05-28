@@ -14,11 +14,12 @@ from app.infrastructure.llm.lite_llm import LiteLLMService
 logger = logging.getLogger(__name__)
 
 # 每个 provider 支持视觉能力的模型列表
+# 列表顺序决定优先级：第一个为默认 OCR 模型
 VISION_MODELS: dict[str, list[str]] = {
     "openai": ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo"],
     "claude": ["claude-sonnet-4-20250514", "claude-opus-4-5-20251101"],
-    "dashscope": ["qwen-vl-max", "qwen-vl-plus"],
-    "zhipu": ["glm-4v", "glm-4v-plus"],
+    "dashscope": ["qwen-vl-ocr", "qwen3-vl-plus", "qwen-vl-plus", "qwen-vl-max"],
+    "zhipu": ["glm-4v-plus", "glm-4v"],
     "ollama": ["llava", "bakllava"],
 }
 
@@ -38,8 +39,8 @@ def is_vision_capable(provider: str, model: str = None) -> bool:
     models = VISION_MODELS.get(provider, [])
     if model in models:
         return True
-    # 宽松匹配：模型名含 vl / vision / 4o / glm-4v 等关键词
-    keywords = ["vl", "vision", "4o", "4v", "llava", "bakllava"]
+    # 宽松匹配：模型名含 vl / vision / ocr / 4o / glm-4v 等关键词
+    keywords = ["vl", "vision", "ocr", "4o", "4v", "llava", "bakllava"]
     model_lower = model.lower()
     return any(kw in model_lower for kw in keywords)
 
@@ -51,8 +52,8 @@ def _find_vision_model(provider: str) -> Optional[str]:
 
 
 def _get_fallback_provider_model() -> tuple[str, str]:
-    """回退到默认的视觉模型（阿里百炼 qwen-vl-max，国内用户最易获取）。"""
-    return "dashscope", "qwen-vl-max"
+    """回退到默认的视觉模型（阿里百炼 qwen-vl-ocr，专用 OCR 模型，更易开通）。"""
+    return "dashscope", "qwen-vl-ocr"
 
 
 def pdf_pages_to_images(content: bytes, dpi: int = 150, max_pages: int = MAX_OCR_PAGES) -> list[str]:
