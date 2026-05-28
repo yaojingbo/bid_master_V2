@@ -42,6 +42,7 @@ interface ExtractTaskState {
   errorMessage: string | null;
   selectedFileId: string | null;
   activeTab: string;
+  percentage: number | null;
 }
 
 interface SimulateTaskData {

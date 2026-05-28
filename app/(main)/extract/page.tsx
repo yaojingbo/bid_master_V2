@@ -119,6 +119,7 @@ export default function ExtractPage() {
           errorMessage,
           selectedFileId,
           activeTab,
+          percentage,
         });
       }, 200);
     }
@@ -135,6 +136,7 @@ export default function ExtractPage() {
     errorMessage,
     selectedFileId,
     activeTab,
+    percentage,
   ]);
 
   // 页面挂载时：检查 taskStore 中是否有未完成的任务，恢复 UI 状态
@@ -161,9 +163,11 @@ export default function ExtractPage() {
     setStreamRawText(saved.streamRawText);
     setIsDone(saved.isDone);
     setErrorMessage(saved.errorMessage);
+    setPercentage(saved.percentage ?? null);
 
     // 如果任务之前正在处理但未完成（切换页面导致 SSE 断开），轮询后端检查是否已完成
     if (saved.isStreaming && !saved.isDone && !saved.errorMessage && saved.selectedFileId) {
+      setProgressMessage(saved.progressMessage || '正在恢复任务...');
       let retryCount = 0;
       const maxRetries = 30;
 
