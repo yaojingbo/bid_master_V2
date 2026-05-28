@@ -222,6 +222,7 @@ export default function ExtractPage() {
               errorMessage: null,
               selectedFileId: saved.selectedFileId,
               activeTab: saved.activeTab,
+              percentage: 100,
             });
             return;
           }
