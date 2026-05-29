@@ -27,10 +27,10 @@ class TestLiteLLMServiceModelMapping:
 
     def test_model_mapping_deepseek(self, service):
         """默认模型应返回 litellm provider/model 格式。"""
-        assert service._get_model_name("deepseek") == "deepseek/deepseek-v4-pro"
+        assert service._get_model_name("deepseek") == "deepseek/deepseek-chat"
 
     def test_model_mapping_dashscope(self, service):
-        assert service._get_model_name("dashscope") == "openai/qwen-turbo"
+        assert service._get_model_name("dashscope") == "openai/qwen3.6-plus"
 
     def test_model_mapping_zhipu(self, service):
         assert service._get_model_name("zhipu") == "openai/glm-4-flash"
@@ -98,17 +98,21 @@ class TestLiteLLMServiceProviders:
             )
             return LiteLLMService()
 
-    def test_get_api_key_deepseek(self, service):
+    @pytest.mark.asyncio
+    async def test_get_api_key_deepseek(self, service):
         """应正确获取 DeepSeek API Key。"""
-        assert service._get_api_key("deepseek") == "sk-deepseek-test"
+        assert await service._get_api_key("deepseek") == "sk-deepseek-test"
 
-    def test_get_api_key_openai(self, service):
+    @pytest.mark.asyncio
+    async def test_get_api_key_openai(self, service):
         """应正确获取 OpenAI API Key。"""
-        assert service._get_api_key("openai") == "sk-openai-test"
+        assert await service._get_api_key("openai") == "sk-openai-test"
 
-    def test_get_api_key_unknown_provider(self, service):
-        """未知供应商应返回空字符串。"""
-        assert service._get_api_key("unknown") == ""
+    @pytest.mark.asyncio
+    async def test_get_api_key_unknown_provider(self, service):
+        """未知供应商且无 Key 时应抛出配置错误。"""
+        with pytest.raises(ValueError, match="未配置 unknown 的 API Key"):
+            await service._get_api_key("unknown")
 
 
 class TestLiteLLMServiceComplete:

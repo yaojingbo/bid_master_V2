@@ -1,41 +1,89 @@
-"""Unit tests for crypto utilities."""
-import pytest
-from app.utils.crypto import generate_key, encrypt_data, decrypt_data
+"""
+Crypto utility unit tests.
+"""
+
+from app.utils.crypto import generate_salt, hash_password, verify_password, generate_api_key
 
 
-class TestCrypto:
-    """Test cases for crypto utilities."""
+class TestGenerateSalt:
+    """Tests for salt generation."""
 
-    def test_generate_key(self):
-        """Test key generation."""
-        key = generate_key()
-        assert key is not None
-        assert len(key) > 0
+    def test_salt_is_bytes(self):
+        salt = generate_salt()
+        assert isinstance(salt, bytes)
 
-    def test_encrypt_decrypt_data(self):
-        """Test encryption and decryption."""
-        original = b"Secret data"
-        encrypted = encrypt_data(original)
-        decrypted = decrypt_data(encrypted)
+    def test_salt_default_length(self):
+        salt = generate_salt()
+        assert len(salt) == 32
 
-        assert decrypted == original
-        assert encrypted != original
+    def test_salt_custom_length(self):
+        salt = generate_salt(length=16)
+        assert len(salt) == 16
 
-    def test_encrypt_returns_bytes(self):
-        """Test that encryption returns bytes."""
-        encrypted = encrypt_data(b"test")
-        assert isinstance(encrypted, bytes)
+    def test_different_salts_are_different(self):
+        salt1 = generate_salt()
+        salt2 = generate_salt()
+        assert salt1 != salt2
 
-    def test_different_data_produces_different_encrypted(self):
-        """Test that different data produces different encrypted output."""
-        data1 = b"test1"
-        data2 = b"test2"
-        encrypted1 = encrypt_data(data1)
-        encrypted2 = encrypt_data(data2)
-        assert encrypted1 != encrypted2
 
-    def test_empty_data(self):
-        """Test encrypting empty data."""
-        encrypted = encrypt_data(b"")
-        decrypted = decrypt_data(encrypted)
-        assert decrypted == b""
+class TestHashPassword:
+    """Tests for password hashing."""
+
+    def test_hash_is_string(self):
+        salt = generate_salt()
+        hash_val = hash_password("password123", salt)
+        assert isinstance(hash_val, str)
+
+    def test_same_password_same_salt_same_hash(self):
+        salt = generate_salt()
+        hash1 = hash_password("password123", salt)
+        hash2 = hash_password("password123", salt)
+        assert hash1 == hash2
+
+    def test_different_password_different_hash(self):
+        salt = generate_salt()
+        hash1 = hash_password("password123", salt)
+        hash2 = hash_password("password456", salt)
+        assert hash1 != hash2
+
+    def test_same_password_different_salt_different_hash(self):
+        hash1 = hash_password("password123", generate_salt())
+        hash2 = hash_password("password123", generate_salt())
+        assert hash1 != hash2
+
+
+class TestVerifyPassword:
+    """Tests for password verification."""
+
+    def test_correct_password(self):
+        salt = generate_salt()
+        hash_val = hash_password("password123", salt)
+        assert verify_password("password123", salt, hash_val) is True
+
+    def test_wrong_password(self):
+        salt = generate_salt()
+        hash_val = hash_password("password123", salt)
+        assert verify_password("wrongpassword", salt, hash_val) is False
+
+    def test_wrong_salt(self):
+        salt1 = generate_salt()
+        salt2 = generate_salt()
+        hash_val = hash_password("password123", salt1)
+        assert verify_password("password123", salt2, hash_val) is False
+
+
+class TestGenerateApiKey:
+    """Tests for API key generation."""
+
+    def test_key_is_string(self):
+        key = generate_api_key()
+        assert isinstance(key, str)
+
+    def test_key_length(self):
+        key = generate_api_key()
+        assert len(key) >= 32
+
+    def test_different_keys_are_different(self):
+        key1 = generate_api_key()
+        key2 = generate_api_key()
+        assert key1 != key2

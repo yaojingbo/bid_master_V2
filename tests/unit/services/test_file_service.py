@@ -1,75 +1,78 @@
-"""Unit tests for FileService."""
+"""
+File service unit tests.
+"""
 import pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
+
 from app.services.file_service import FileService
+from app.utils.exceptions import FileTooLargeError, UnsupportedFileTypeError
 
 
 class TestFileService:
-    """Test cases for FileService."""
+    """Tests for FileService."""
 
     @pytest.fixture
-    def service(self):
-        """Create a service instance."""
-        return FileService()
+    def storage(self):
+        """Create mocked storage service."""
+        storage = MagicMock()
+        storage.save = AsyncMock(return_value=("file-1", "pg://file-1", b"encrypted"))
+        storage.read = AsyncMock(return_value=b"file content")
+        storage.delete = AsyncMock(return_value=True)
+        storage.exists = AsyncMock(return_value=True)
+        return storage
 
-    def test_upload_file_success(self, service, tmp_path):
-        """Test successful file upload."""
-        test_file = tmp_path / "test.pdf"
-        test_file.write_bytes(b"PDF content")
+    @pytest.fixture
+    def service(self, storage):
+        """Create service with mocked storage."""
+        return FileService(storage=storage)
 
-        with patch.object(service, "storage_service") as mock_storage:
-            mock_storage.store_file.return_value = "stored_file_id"
-            result = service.upload_file(str(test_file), "test.pdf")
+    def test_validate_file_accepts_allowed_type(self, service):
+        """允许的文件类型和大小应通过校验。"""
+        service.validate_file(b"PDF content", "application/pdf")
 
-            assert result["file_id"] == "stored_file_id"
-            assert result["filename"] == "test.pdf"
+    def test_validate_file_size_limit(self, service):
+        """超出大小限制应抛出 FileTooLargeError。"""
+        large_content = b"x" * (service.settings.max_file_size + 1)
+        with pytest.raises(FileTooLargeError):
+            service.validate_file(large_content, "application/pdf")
 
-    def test_upload_file_size_limit(self, service, tmp_path):
-        """Test file size limit exceeded."""
-        # Create a file larger than 50MB
-        large_file = tmp_path / "large.pdf"
-        large_content = b"x" * (51 * 1024 * 1024)  # 51MB
-        large_file.write_bytes(large_content)
+    def test_validate_unsupported_mime_type(self, service):
+        """不支持的 MIME 类型应抛出 UnsupportedFileTypeError。"""
+        with pytest.raises(UnsupportedFileTypeError):
+            service.validate_file(b"content", "application/octet-stream")
 
-        with pytest.raises(ValueError, match="File size exceeds"):
-            service.upload_file(str(large_file), "large.pdf")
+    @pytest.mark.asyncio
+    async def test_upload_success(self, service, storage):
+        """上传成功应返回当前 schema 使用的文件元数据。"""
+        result = await service.upload(b"PDF content", "test.pdf", "application/pdf", category="tender")
 
-    def test_upload_unsupported_format(self, service, tmp_path):
-        """Test unsupported file format."""
-        test_file = tmp_path / "test.exe"
-        test_file.write_bytes(b"Executable content")
+        storage.save.assert_awaited_once_with(b"PDF content", "test.pdf")
+        assert result["id"] == "file-1"
+        assert result["name"] == "test.pdf"
+        assert result["size"] == len(b"PDF content")
+        assert result["mime_type"] == "application/pdf"
+        assert result["category"] == "tender"
+        assert result["encrypted_path"] == "pg://file-1"
+        assert result["encrypted_content"] == b"encrypted"
+        assert result["status"] == "ready"
 
-        with pytest.raises(ValueError, match="Unsupported file format"):
-            service.upload_file(str(test_file), "test.exe")
+    @pytest.mark.asyncio
+    async def test_download_returns_storage_content(self, service, storage):
+        """下载应返回 storage.read 的内容。"""
+        result = await service.download("file-1")
+        storage.read.assert_awaited_once_with("file-1")
+        assert result == b"file content"
 
-    def test_get_file(self, service):
-        """Test getting file info."""
-        with patch.object(service, "storage_service") as mock_storage:
-            mock_storage.get_file.return_value = {
-                "file_id": "123",
-                "filename": "test.pdf",
-                "size": 1024,
-            }
-            result = service.get_file("123")
-            assert result["file_id"] == "123"
+    @pytest.mark.asyncio
+    async def test_delete_delegates_to_storage(self, service, storage):
+        """删除应委托给 storage.delete。"""
+        result = await service.delete("file-1")
+        storage.delete.assert_awaited_once_with("file-1")
+        assert result is True
 
-    def test_delete_file(self, service):
-        """Test deleting file."""
-        with patch.object(service, "storage_service") as mock_storage:
-            mock_storage.delete_file.return_value = True
-            result = service.delete_file("123")
-            assert result is True
-
-    def test_download_file(self, service, tmp_path):
-        """Test downloading file."""
-        with patch.object(service, "storage_service") as mock_storage:
-            encrypted_file = tmp_path / "encrypted"
-            encrypted_file.write_bytes(b"encrypted content")
-            mock_storage.get_file_path.return_value = str(encrypted_file)
-
-            with patch.object(service, "encryption_service") as mock_enc:
-                mock_enc.decrypt_file.return_value = tmp_path / "decrypted"
-                mock_enc.decrypt_file.return_value.write_bytes(b"content")
-
-                result = service.download_file("123")
-                assert result is not None
+    @pytest.mark.asyncio
+    async def test_exists_delegates_to_storage(self, service, storage):
+        """存在性检查应委托给 storage.exists。"""
+        result = await service.exists("file-1")
+        storage.exists.assert_awaited_once_with("file-1")
+        assert result is True

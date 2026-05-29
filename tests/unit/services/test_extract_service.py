@@ -1,58 +1,91 @@
-"""Unit tests for ExtractService."""
+"""
+Extract service unit tests.
+"""
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
-from unittest.mock import MagicMock, patch
-from app.services.extract_service import ExtractService
+
+from app.services.extract_service import ExtractService, extract_text_from_content
+
+
+class TestExtractTextFromContent:
+    """Tests for content text extraction helpers."""
+
+    def test_extract_plain_utf8_text(self):
+        """UTF-8 文本应直接解码。"""
+        text, needs_ocr = extract_text_from_content("招标文件内容".encode("utf-8"))
+        assert text == "招标文件内容"
+        assert needs_ocr is False
+
+    def test_extract_plain_gbk_text(self):
+        """GBK 文本应可解码。"""
+        text, needs_ocr = extract_text_from_content("招标文件内容".encode("gbk"))
+        assert "招标文件内容" in text
+        assert needs_ocr is False
+
+    def test_extract_unknown_zip_returns_empty_text(self):
+        """无法识别内容结构的 zip 文件应返回空文本。"""
+        text, needs_ocr = extract_text_from_content(b"PK\x03\x04invalid")
+        assert text == ""
+        assert needs_ocr is False
 
 
 class TestExtractService:
-    """Test cases for ExtractService."""
+    """Tests for current ExtractService stream contract."""
 
     @pytest.fixture
-    def service(self):
-        """Create a service instance."""
-        return ExtractService()
+    def file_service(self):
+        service = MagicMock()
+        service.download = AsyncMock(return_value="招标文件内容".encode("utf-8"))
+        return service
 
-    def test_extract_elements_success(self, service):
-        """Test successful element extraction."""
-        with patch.object(service, "llm_service") as mock_llm:
-            mock_llm.chat.return_value = '{"资质要求": "test", "评标办法": "test2"}'
-            result = service.extract_elements("Test content", ["资质要求", "评标办法"])
+    @pytest.fixture
+    def llm_service(self):
+        service = MagicMock()
+        service.llm.MODEL_MAP = {"deepseek": "deepseek/deepseek-chat"}
+        return service
 
-            assert "资质要求" in result
-            assert "评标办法" in result
+    @pytest.fixture
+    def service(self, llm_service, file_service):
+        return ExtractService(llm_service=llm_service, file_service=file_service)
 
-    def test_extract_elements_empty_prompts(self, service):
-        """Test extraction with empty prompts."""
-        with pytest.raises(ValueError, match="No prompts provided"):
-            service.extract_elements("Test content", [])
+    @pytest.mark.asyncio
+    async def test_extract_elements_stream_empty_document(self, service, file_service):
+        """文档无法解析时应返回 error 事件。"""
+        file_service.download.return_value = b"PK\x03\x04invalid"
 
-    def test_extract_elements_file_not_found(self, service):
-        """Test extraction with non-existent file."""
-        with pytest.raises(FileNotFoundError):
-            service.extract_elements("/nonexistent/file.pdf", ["资质要求"])
+        events = []
+        async for event in service.extract_elements_stream("file-1"):
+            events.append(event)
 
-    def test_stream_extract_elements(self, service):
-        """Test streaming element extraction."""
-        with patch.object(service, "llm_service") as mock_llm:
-            mock_llm.stream_chat.return_value = iter([
-                '{"资质要求": "test"',
-                ', "评标办法": "test2"}',
-            ])
-            result = list(service.stream_extract_elements("Test content", ["资质要求", "评标办法"]))
-            assert len(result) > 0
+        assert events[0]["type"] == "progress"
+        assert events[-1]["type"] == "error"
+        assert events[-1]["data"]["message"] == "文档内容为空或无法解析"
 
-    def test_get_extraction_template(self, service):
-        """Test getting extraction template."""
-        template = service.get_extraction_template()
+    @pytest.mark.asyncio
+    async def test_extract_elements_stream_delegates_to_llm_progress(self, service, file_service):
+        """文档解析成功后应进入 LLM 流式阶段。"""
+        async def fake_stream(*args, **kwargs):
+            yield {"type": "done", "data": {"summary": "ok", "elementCount": 0}}
 
-        assert "招标项目" in template
-        assert "资质要求" in template
-        assert "评标办法" in template
+        with patch.object(service, "_stream_llm_with_progress", side_effect=fake_stream) as mock_stream:
+            events = []
+            async for event in service.extract_elements_stream("file-1", provider="deepseek"):
+                events.append(event)
 
-    def test_validate_extraction_result(self, service):
-        """Test validating extraction result."""
-        valid_result = {"资质要求": "test", "评标办法": "test2"}
-        assert service.validate_extraction_result(valid_result) is True
+        file_service.download.assert_awaited_once_with("file-1")
+        assert mock_stream.called
+        assert any(event["type"] == "progress" for event in events)
+        assert events[-1]["type"] == "done"
 
-        invalid_result = {"invalid": "test"}
-        assert service.validate_extraction_result(invalid_result) is False
+    @pytest.mark.asyncio
+    async def test_extract_batch_stream_requires_two_valid_files(self, service, file_service):
+        """批量对比至少需要两个有效文件。"""
+        file_service.download.return_value = b"PK\x03\x04invalid"
+
+        events = []
+        async for event in service.extract_batch_stream(["file-1", "file-2"]):
+            events.append(event)
+
+        assert events[-1]["type"] == "error"
+        assert "至少需要 2 个有效文件" in events[-1]["data"]["message"]

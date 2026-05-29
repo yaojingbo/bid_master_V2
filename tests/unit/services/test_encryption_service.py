@@ -1,61 +1,79 @@
-"""Unit tests for EncryptionService."""
+"""
+Encryption service unit tests.
+"""
 import pytest
+from cryptography.fernet import Fernet
+
 from app.services.encryption_service import EncryptionService
 
 
 class TestEncryptionService:
-    """Test cases for EncryptionService."""
+    """Tests for EncryptionService encrypt/decrypt operations."""
 
     @pytest.fixture
     def service(self):
-        """Create a service instance with test key."""
-        return EncryptionService(fernet_key=None)
+        """Create service with a generated key for testing."""
+        key = Fernet.generate_key()
+        return EncryptionService(key=key.decode())
 
-    def test_encrypt_decrypt_text(self, service):
-        """Test encrypting and decrypting text."""
-        original = "Hello, Bid Master!"
-        encrypted = service.encrypt_text(original)
-        decrypted = service.decrypt_text(encrypted)
+    def test_encrypt_returns_different_data(self, service):
+        """加密后数据应与原始数据不同。"""
+        original = b"sensitive document content"
+        encrypted = service.encrypt(original)
+        assert encrypted != original
+
+    def test_decrypt_returns_original(self, service):
+        """解密后应还原原始数据。"""
+        original = b"sensitive document content"
+        encrypted = service.encrypt(original)
+        decrypted = service.decrypt(encrypted)
         assert decrypted == original
 
-    def test_encrypt_returns_different_output(self, service):
-        """Test that encryption produces different output."""
-        original = "Test message"
-        encrypted = service.encrypt_text(original)
-        assert encrypted != original
-        assert encrypted.endswith("==")
+    def test_encrypted_data_is_bytes(self, service):
+        """加密结果应为 bytes 类型。"""
+        original = b"test data"
+        encrypted = service.encrypt(original)
+        assert isinstance(encrypted, bytes)
 
-    def test_encrypt_file(self, service, tmp_path):
-        """Test encrypting a file."""
-        test_file = tmp_path / "test.txt"
-        test_content = b"Secret content"
-        test_file.write_bytes(test_content)
+    def test_different_encryptions_are_different(self, service):
+        """同一数据多次加密应产生不同结果。"""
+        original = b"same data"
+        encrypted1 = service.encrypt(original)
+        encrypted2 = service.encrypt(original)
+        assert encrypted1 != encrypted2
 
-        encrypted_file = service.encrypt_file(str(test_file))
-        assert encrypted_file.exists()
-        assert encrypted_file.read_bytes() != test_content
+    def test_decrypt_wrong_data_raises_error(self, service):
+        """解密无效数据应抛出异常。"""
+        with pytest.raises(Exception):
+            service.decrypt(b"invalid encrypted data")
 
-    def test_decrypt_file(self, service, tmp_path):
-        """Test decrypting a file."""
-        test_file = tmp_path / "test.txt"
-        test_content = b"Secret content"
-        test_file.write_bytes(test_content)
+    def test_generate_key_produces_valid_fernet_key(self):
+        """generate_key 应产生有效的 Fernet 密钥。"""
+        key = EncryptionService.generate_key()
+        assert isinstance(key, bytes)
+        assert len(key) == 44
 
-        encrypted_file = service.encrypt_file(str(test_file))
-        decrypted_file = service.decrypt_file(str(encrypted_file))
+    def test_key_from_password_produces_valid_key(self):
+        """key_from_password 应产生有效的 Fernet 密钥。"""
+        key = EncryptionService.key_from_password("test_password_123", b"salt_value_12345")
+        assert isinstance(key, bytes)
+        assert len(key) == 44
 
-        assert decrypted_file.read_bytes() == test_content
+    def test_key_from_password_same_inputs_same_key(self):
+        """相同密码和盐应产生相同密钥。"""
+        key1 = EncryptionService.key_from_password("test_password_123", b"salt_value_12345")
+        key2 = EncryptionService.key_from_password("test_password_123", b"salt_value_12345")
+        assert key1 == key2
 
-    def test_encrypt_large_content(self, service):
-        """Test encrypting large content."""
-        large_content = "x" * 10 * 1024 * 1024  # 10MB
-        encrypted = service.encrypt_text(large_content)
-        decrypted = service.decrypt_text(encrypted)
-        assert decrypted == large_content
+    def test_key_from_password_different_salt_different_key(self):
+        """不同盐应产生不同密钥。"""
+        key1 = EncryptionService.key_from_password("test_password_123", b"salt_1")
+        key2 = EncryptionService.key_from_password("test_password_123", b"salt_2")
+        assert key1 != key2
 
-    def test_empty_string(self, service):
-        """Test encrypting empty string."""
-        original = ""
-        encrypted = service.encrypt_text(original)
-        decrypted = service.decrypt_text(encrypted)
+    def test_encrypt_decrypt_roundtrip_large_data(self, service):
+        """加密解密大内容应正确还原。"""
+        original = b"large document content " * 1000
+        encrypted = service.encrypt(original)
+        decrypted = service.decrypt(encrypted)
         assert decrypted == original
