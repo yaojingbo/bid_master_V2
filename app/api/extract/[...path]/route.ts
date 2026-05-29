@@ -8,9 +8,9 @@ import { NextRequest } from "next/server";
 // LLM 提取可能需要 1-3 分钟，Vercel 默认超时 10s(Hobby)/60s(Pro) 远不够
 export const maxDuration = 300;
 
-const BACKEND = process.env.NODE_ENV === "production"
+const BACKEND = (process.env.BACKEND_URL || (process.env.NODE_ENV === "production"
   ? "https://bidmasterv2-production.up.railway.app"
-  : "http://localhost:8000";
+  : "http://localhost:8000")).replace(/\/$/, "");
 
 async function proxyRequest(request: NextRequest, segments: string[]) {
   const path = segments.join("/");

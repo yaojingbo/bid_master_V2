@@ -6,9 +6,9 @@
  */
 import { NextRequest, NextResponse } from "next/server";
 
-const BACKEND = process.env.NODE_ENV === "production"
+const BACKEND = (process.env.BACKEND_URL || (process.env.NODE_ENV === "production"
   ? "https://bidmasterv2-production.up.railway.app"
-  : "http://localhost:8000";
+  : "http://localhost:8000")).replace(/\/$/, "");
 
 const IS_PRODUCTION = process.env.NODE_ENV === "production";
 const REFRESH_COOKIE_MAX_AGE = 7 * 86400; // 7 天
