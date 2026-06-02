@@ -2,6 +2,7 @@
 邮件发送服务（Resend HTTP API）。
 """
 import logging
+import os
 
 import httpx
 from app.config import get_settings
@@ -46,10 +47,21 @@ async def send_reset_link(email: str, token: str) -> tuple[bool, str]:
     return await _send_email(email, subject, text, settings)
 
 
+def _is_production() -> bool:
+    return bool(os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("RENDER") or os.getenv("FLY_APP_NAME"))
+
+
 async def _send_email(to: str, subject: str, text: str, settings) -> tuple[bool, str]:
+    # 本地开发模式：始终在控制台输出邮件内容，方便开发者查看验证码和重置链接
+    if not _is_production():
+        print(f"\n{'='*60}")
+        print(f"[邮件] 收件人: {to}")
+        print(f"[邮件] 主题: {subject}")
+        print(f"[邮件] 内容:\n{text}")
+        print(f"{'='*60}\n", flush=True)
+
     if not settings.resend_api_key:
         logger.warning(f"Resend API Key 未配置，邮件未发送。收件人: {to}, 主题: {subject}")
-        logger.info(f"邮件内容:\n{text}")
         return True, ""
 
     try:
