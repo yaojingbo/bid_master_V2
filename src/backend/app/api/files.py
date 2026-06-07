@@ -11,7 +11,7 @@ from urllib.parse import quote
 from app.services.file_service import FileService
 from app.models.schemas import FileUploadResponse, FileListResponse, FileListItem
 from app.utils.exceptions import FileTooLargeError, UnsupportedFileTypeError
-from app.infrastructure.pg_storage import add_file, list_files as pg_list_files, get_file as pg_get_file, delete_file as pg_delete_file, _now
+from app.infrastructure.pg_storage import add_file, list_files as pg_list_files, get_file as pg_get_file, delete_file as pg_delete_file, _now, calculate_content_hash
 from app.utils.auth_dep import get_current_user
 
 router = APIRouter(prefix="/files", tags=["files"])
@@ -59,6 +59,7 @@ async def upload_file(
             "path": result["encrypted_path"],
             "size": result["size"],
             "type": normalize_file_type(result["name"], result["mime_type"]),
+            "file_hash": calculate_content_hash(content),
             "created_at": _now(),
         }, user_id=current_user["id"], encrypted_content=result["encrypted_content"])
 

@@ -1,14 +1,16 @@
 from __future__ import annotations
 """
 File storage with encryption support using Fernet.
-文件内容加密后存入 PostgreSQL（BYTEA 列），确保 Railway 部署后数据持久化。
+文件内容加密后存入 PostgreSQL（BYTEA 列），本地数据库不可用时回退到磁盘文件。
 """
 import uuid
+from pathlib import Path
+import aiofiles
 from cryptography.fernet import Fernet
 from typing import Optional
 
 from app.config import get_settings
-from app.infrastructure.pg_storage import get_file_content
+from app.infrastructure.pg_storage import get_file_content, use_mock_storage
 
 
 class StorageService:
@@ -16,7 +18,9 @@ class StorageService:
 
     def __init__(self, fernet_key: str = None):
         settings = get_settings()
+        self.upload_dir = Path(settings.upload_dir)
         self.fernet_key = fernet_key or settings.fernet_key
+        self.upload_dir.mkdir(parents=True, exist_ok=True)
 
         # Initialize Fernet cipher
         if self.fernet_key:
@@ -24,6 +28,9 @@ class StorageService:
         else:
             # Generate a key for development (NOT for production)
             self.cipher = Fernet(Fernet.generate_key())
+
+    def _get_file_path(self, file_id: str) -> Path:
+        return self.upload_dir / f"{file_id}.enc"
 
     async def save(self, content: bytes, original_name: str) -> tuple[str, str]:
         """
@@ -41,7 +48,11 @@ class StorageService:
         """
         file_id = str(uuid.uuid4())
         encrypted_content = self.cipher.encrypt(content)
-        # placeholder_path 仅保留兼容性，实际内容在 encrypted_content 列
+        if use_mock_storage():
+            file_path = self._get_file_path(file_id)
+            async with aiofiles.open(file_path, "wb") as f:
+                await f.write(encrypted_content)
+            return file_id, str(file_path), encrypted_content
         return file_id, f"pg://{file_id}", encrypted_content
 
     async def read(self, file_id: str) -> bytes:
@@ -54,9 +65,16 @@ class StorageService:
         Returns:
             Decrypted file content
         """
-        encrypted_content = await get_file_content(file_id)
-        if encrypted_content is None:
-            raise FileNotFoundError(f"File not found: {file_id}")
+        if use_mock_storage():
+            file_path = self._get_file_path(file_id)
+            if not file_path.exists():
+                raise FileNotFoundError(f"File not found: {file_id}")
+            async with aiofiles.open(file_path, "rb") as f:
+                encrypted_content = await f.read()
+        else:
+            encrypted_content = await get_file_content(file_id)
+            if encrypted_content is None:
+                raise FileNotFoundError(f"File not found: {file_id}")
 
         # Decrypt
         return self.cipher.decrypt(encrypted_content)
@@ -71,10 +89,18 @@ class StorageService:
         Returns:
             True (row deletion is handled elsewhere)
         """
+        if use_mock_storage():
+            file_path = self._get_file_path(file_id)
+            if file_path.exists():
+                file_path.unlink()
+                return True
+            return False
         return True
 
     async def exists(self, file_id: str) -> bool:
         """Check if file exists in database."""
+        if use_mock_storage():
+            return self._get_file_path(file_id).exists()
         content = await get_file_content(file_id)
         return content is not None
 

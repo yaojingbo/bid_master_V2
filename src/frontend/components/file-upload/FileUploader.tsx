@@ -57,10 +57,12 @@ export function FileUploader({
       if (file) {
         if (file.size > maxSize) {
           alert("文件大小超过 50MB 限制");
+          e.target.value = '';
           return;
         }
         setIsUploading(true);
         await onUpload(file);
+        e.target.value = '';
         setIsUploading(false);
       }
     },

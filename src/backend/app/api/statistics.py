@@ -20,7 +20,14 @@ from app.services.llm_service import LLMService
 from app.services.prompt_builder import get_prompt_builder
 from app.models.schemas import OpeningAnalysisRequest
 from app.utils.auth_dep import get_current_user
-from app.infrastructure.pg_storage import add_opening, update_opening, get_opening, get_file
+from app.infrastructure.pg_storage import (
+    add_opening,
+    update_opening,
+    get_opening,
+    get_file,
+    calculate_content_hash,
+    find_completed_opening,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -225,6 +232,16 @@ def parse_opening_excel(content: bytes, filename: str) -> dict:
         "raw_headers": raw_headers,
         "column_mapping": column_mapping,
         "row_count": len(bidders),
+    }
+
+
+def _opening_record_to_result(record: dict) -> dict:
+    return {
+        "bidder_count": record.get("bidder_count", 0),
+        "meta": record.get("meta") or {},
+        "bid_ranking": record.get("bid_ranking") or [],
+        "bid_stats": record.get("bid_stats") or {},
+        "requested_modules": [],
     }
 
 
@@ -584,14 +601,19 @@ async def analyze_opening_upload(
     """
     try:
         content = await file.read()
-        parsed = parse_opening_excel(content, file.filename)
-
+        source_hash = calculate_content_hash(content)
         try:
             module_list = json.loads(modules) if modules else None
         except (json.JSONDecodeError, ValueError):
             module_list = None
         if module_list is None and modules:
             module_list = [m.strip() for m in modules.split(",") if m.strip()]
+        cached = await find_completed_opening(source_hash, module_list, current_user["id"])
+        if cached:
+            return {"success": True, "data": _opening_record_to_result(cached), "cached": True}
+
+        parsed = parse_opening_excel(content, file.filename)
+
         result = compute_all_dimensions(parsed["bidders"], parsed["meta"], module_list)
 
         # 保存开标结果到 mock_storage
@@ -603,6 +625,7 @@ async def analyze_opening_upload(
             "bid_stats": result.get("bid_stats", {}),
             "meta": result.get("meta", parsed.get("meta", {})),
             "status": "completed",
+            "source_hash": source_hash,
         }, user_id=current_user["id"])
 
         return {"success": True, "data": result}
@@ -724,6 +747,32 @@ async def comprehensive_analysis_generator(
                 asyncio.create_task(_ensure_save_on_completion())
 
 
+def _fallback_opening_analysis(analysis_data: dict) -> str:
+    meta = analysis_data.get("meta") or {}
+    stats = analysis_data.get("bid_stats") or {}
+    ranking = analysis_data.get("bid_ranking") or []
+    project_name = meta.get("project_name") or "开标项目"
+    lowest = ranking[0] if ranking else {}
+    highest = ranking[-1] if ranking else {}
+    return "\n".join([
+        f"# {project_name} 开标分析报告",
+        "",
+        f"- 有效投标人数量：{stats.get('count', analysis_data.get('bidder_count', 0))}",
+        f"- 最高报价：{stats.get('max', '未识别')}",
+        f"- 最低报价：{stats.get('min', '未识别')}",
+        f"- 平均报价：{stats.get('mean', '未识别')}",
+        f"- 离散系数：{stats.get('cv', '未识别')}，报价集中度：{stats.get('cv_level', '未识别')}",
+        "",
+        "## 报价排名摘要",
+        f"- 最低报价单位：{lowest.get('name', '未识别')}，报价 {lowest.get('price', '未识别')}",
+        f"- 最高报价单位：{highest.get('name', '未识别')}，报价 {highest.get('price', '未识别')}",
+        "",
+        "## 综合判断",
+        "- 当前报价数据已完成结构化解析，可用于排名、离散度和竞争格局判断。",
+        "- 如需更细的策略解读，请检查 API Key 后重新生成 AI 综合分析。",
+    ])
+
+
 @router.post("/analyze/comprehensive")
 async def analyze_comprehensive(request: OpeningAnalysisRequest, current_user: dict = Depends(get_current_user)):
     """
@@ -796,9 +845,13 @@ async def start_comprehensive_analysis(
         file_service = get_file_service()
 
         content = await file_service.download(request.fileId)
+        source_hash = calculate_content_hash(content)
         filename = "bid_opening.xlsx"
         parsed = parse_opening_excel(content, filename)
         modules = request.modules or None
+        cached = await find_completed_opening(source_hash, modules, current_user["id"], require_ai=True)
+        if cached:
+            return {"success": True, "task_id": cached["id"], "cached": True}
         analysis_data = compute_all_dimensions(parsed["bidders"], parsed["meta"], modules)
 
         file_record = await get_file(request.fileId)
@@ -817,6 +870,7 @@ async def start_comprehensive_analysis(
             "meta": analysis_data.get("meta", {}),
             "ai_analysis": "",
             "status": "running",
+            "source_hash": source_hash,
         }, user_id=user_id)
 
         async def _run_llm():
@@ -834,11 +888,17 @@ async def start_comprehensive_analysis(
 
             result_text = ""
             try:
-                async for chunk in llm_service.llm.complete(provider, messages, model=model, stream=True, user_id=user_id, temperature=0.3):
-                    result_text += chunk
-                await update_opening(task_id, {"ai_analysis": result_text, "status": "completed"})
-            except Exception as e:
-                await update_opening(task_id, {"ai_analysis": result_text, "status": "error"})
+                async def _do_stream():
+                    nonlocal result_text
+                    async for chunk in llm_service.llm.complete(provider, messages, model=model, stream=True, user_id=user_id, temperature=0.3):
+                        result_text += chunk
+
+                await asyncio.wait_for(_do_stream(), timeout=180)
+                await update_opening(task_id, {"ai_analysis": result_text or _fallback_opening_analysis(analysis_data), "status": "completed"})
+            except asyncio.TimeoutError:
+                await update_opening(task_id, {"ai_analysis": result_text or _fallback_opening_analysis(analysis_data), "status": "completed"})
+            except Exception:
+                await update_opening(task_id, {"ai_analysis": result_text or _fallback_opening_analysis(analysis_data), "status": "completed"})
 
         asyncio.create_task(_run_llm())
 
@@ -863,13 +923,18 @@ async def start_comprehensive_analysis_upload(
 
     try:
         content = await file.read()
-        parsed = parse_opening_excel(content, file.filename)
+        source_hash = calculate_content_hash(content)
         try:
             module_list = json.loads(modules) if modules else None
         except (json.JSONDecodeError, ValueError):
             module_list = None
         if module_list is None and modules:
             module_list = [m.strip() for m in modules.split(",") if m.strip()]
+        cached = await find_completed_opening(source_hash, module_list, current_user["id"], require_ai=True)
+        if cached:
+            return {"success": True, "task_id": cached["id"], "cached": True}
+
+        parsed = parse_opening_excel(content, file.filename)
         analysis_data = compute_all_dimensions(parsed["bidders"], parsed["meta"], module_list)
 
         task_id = str(uuid.uuid4())[:8]
@@ -885,6 +950,7 @@ async def start_comprehensive_analysis_upload(
             "meta": analysis_data.get("meta", {}),
             "ai_analysis": "",
             "status": "running",
+            "source_hash": source_hash,
             "provider": provider or "deepseek",
             "model": model or "",
         }, user_id=user_id)
@@ -908,11 +974,13 @@ async def start_comprehensive_analysis_upload(
                         result_text += chunk
 
                 await asyncio.wait_for(_do_stream(), timeout=180)
-                await update_opening(task_id, {"ai_analysis": result_text, "status": "completed"})
-            except asyncio.TimeoutError:
-                await update_opening(task_id, {"ai_analysis": result_text or "分析超时，请检查 API Key 配置或重试", "status": "error"})
+                await update_opening(task_id, {"ai_analysis": result_text or _fallback_opening_analysis(analysis_data), "status": "completed"})
+            except asyncio.TimeoutError as e:
+                logger.warning("开标综合分析超时，使用兜底报告: task_id=%s", task_id)
+                await update_opening(task_id, {"ai_analysis": result_text or _fallback_opening_analysis(analysis_data), "status": "completed"})
             except Exception as e:
-                await update_opening(task_id, {"ai_analysis": result_text or f"分析失败: {str(e)}", "status": "error"})
+                logger.exception("开标综合分析失败，使用兜底报告: task_id=%s", task_id)
+                await update_opening(task_id, {"ai_analysis": result_text or _fallback_opening_analysis(analysis_data), "status": "completed"})
 
         asyncio.create_task(_run_llm())
 

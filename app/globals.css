@@ -85,10 +85,7 @@ body {
   animation: shimmer 2s ease-in-out infinite;
 }
 
-/* ── 文件输入框隐藏（兼容点击激活）────────── */
-/* pointer-events: none 禁止隐藏 input 自身接收点击，
-   所有点击走父容器 onClick → input.click() 的统一路径，
-   避免 Chrome 因原生点击与程序点击冲突而拒绝弹出文件选择器。 */
+/* ── 文件输入框隐藏（兼容 label 与程序点击激活）────────── */
 @utility file-sr-only {
   position: absolute;
   width: 1px;
@@ -99,5 +96,4 @@ body {
   opacity: 0;
   white-space: nowrap;
   border-width: 0;
-  pointer-events: none;
 }

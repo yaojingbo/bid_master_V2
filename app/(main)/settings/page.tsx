@@ -91,6 +91,11 @@ export default function SettingsPage() {
     loadSavedKeys();
   }, [loadProviders, loadSavedKeys]);
 
+  const getPendingModel = useCallback(
+    (providerId: string) => modelValues[providerId]?.trim() || activeModels[providerId],
+    [activeModels, modelValues]
+  );
+
   // 测试连接
   const handleTest = async (providerId: string) => {
     setTestingProvider(providerId);
@@ -101,7 +106,7 @@ export default function SettingsPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           provider: providerId,
-          model: activeModels[providerId],
+          model: getPendingModel(providerId),
           apiKey: apiKeyValues[providerId]?.trim() || undefined,
         }),
       });
@@ -154,7 +159,12 @@ export default function SettingsPage() {
   // 保存 API Key（保存前验证连接）
   const handleSaveKey = async (providerId: string) => {
     const key = apiKeyValues[providerId]?.trim();
-    if (!key) {
+    const typedModel = modelValues[providerId]?.trim();
+    if (!key && !typedModel) {
+      setApiKeyResult({ provider: providerId, success: false, message: "请输入型号或 API Key" });
+      return;
+    }
+    if (!key && !isKeySaved(providerId)) {
       setApiKeyResult({ provider: providerId, success: false, message: "请输入 API Key" });
       return;
     }
@@ -162,30 +172,33 @@ export default function SettingsPage() {
     setApiKeyResult(null);
 
     try {
+      const model = getPendingModel(providerId);
       const testRes = await authFetch("/api/settings/test", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ provider: providerId, model: activeModels[providerId], apiKey: key }),
+        body: JSON.stringify({ provider: providerId, model, apiKey: key || undefined }),
       });
       const testData = await testRes.json();
       if (!testData.success) {
         setApiKeyResult({
           provider: providerId,
           success: false,
-          message: `API Key 验证失败: ${testData.error || "无法连接"}，请检查 Key 是否正确`,
+          message: `连接验证失败: ${testData.error || "无法连接"}，请检查型号或 API Key 是否正确`,
         });
         return;
       }
 
-      const model = modelValues[providerId]?.trim();
-      if (model) {
-        setProviderModel(providerId, model);
+      if (typedModel) {
+        setProviderModel(providerId, typedModel);
         setModelValues((prev) => ({ ...prev, [providerId]: "" }));
       }
 
-      await saveApiKey(providerId, key);
-      setApiKeyValues((prev) => ({ ...prev, [providerId]: "" }));
-      setApiKeyResult({ provider: providerId, success: true, message: "API Key 已保存" });
+      if (key) {
+        await saveApiKey(providerId, key);
+        setApiKeyValues((prev) => ({ ...prev, [providerId]: "" }));
+      }
+
+      setApiKeyResult({ provider: providerId, success: true, message: key ? "API Key 已保存" : "型号已保存" });
       await loadSavedKeys();
     } catch (err) {
       setApiKeyResult({

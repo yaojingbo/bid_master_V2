@@ -23,6 +23,7 @@ import { useFileUpload } from "@/hooks/useFileUpload";
 import { useFileStore } from "@/stores/file-store";
 import { useTaskStore } from "@/stores/task-store";
 import { useSettingsStore } from "@/stores/settings-store";
+import { listFiles } from "@/lib/data-api";
 
 // 4 步流程定义
 const steps = [
@@ -52,6 +53,15 @@ const projectTypes = [
   { value: "construction", label: "施工类" },
   { value: "equipment", label: "设备类" },
 ];
+
+const deriveSimPhase = (percentage: number | null) => {
+  if (percentage == null) return "connecting";
+  if (percentage >= 95) return "completing";
+  if (percentage >= 60) return "generating";
+  if (percentage >= 25) return "analyzing";
+  if (percentage >= 8) return "reading";
+  return "connecting";
+};
 
 interface TaskData {
   taskId: string;
@@ -192,8 +202,28 @@ export default function SimulatePage() {
   }, []);
 
   const { upload } = useFileUpload();
-  const { files, removeFile } = useFileStore();
+  const { files, removeFile, addFile } = useFileStore();
   const [selectedFileIds, setSelectedFileIds] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    listFiles({ page: 1, page_size: 50 })
+      .then((res) => {
+        for (const f of res.files) {
+          addFile({
+            id: f.id,
+            name: f.original_name,
+            size: f.size,
+            mimeType: f.type,
+            category: "tender",
+            status: "ready",
+            createdAt: f.created_at || new Date().toISOString(),
+          });
+        }
+      })
+      .catch(() => {
+        // 静默失败，页面仍可上传新文件
+      });
+  }, [addFile]);
 
   // 页面加载时默认全选
   useEffect(() => {
@@ -207,6 +237,7 @@ export default function SimulatePage() {
     if (!file) return;
     setUploadingFile(file.name);
     await upload(file);
+    e.target.value = '';
     setUploadingFile(null);
     // 新上传的文件自动勾选（取 store 最新状态）
     const latest = useFileStore.getState().files;
@@ -323,11 +354,19 @@ export default function SimulatePage() {
               try {
                 const event = JSON.parse(line.slice(6));
                 if (event.phase) setSimPhase(event.phase as string);
-                if (event.percentage != null) setSimPercentage(event.percentage as number);
+                if (event.percentage != null) {
+                  const percentage = event.percentage as number;
+                  setSimPercentage(percentage);
+                  if (!event.phase) setSimPhase(deriveSimPhase(percentage));
+                }
 
                 if (event.type === "progress" || event.type === "llm_progress") {
                   if (event.phase) setSimPhase(event.phase as string);
-                  if (event.percentage != null) setSimPercentage(event.percentage as number);
+                  if (event.percentage != null) {
+                    const percentage = event.percentage as number;
+                    setSimPercentage(percentage);
+                    if (!event.phase) setSimPhase(deriveSimPhase(percentage));
+                  }
                   if (event.message) setStreamContent((prev) => prev + event.message + "\n");
                 } else if (event.type === "content") {
                   if (!simPhase) setSimPhase("generating");

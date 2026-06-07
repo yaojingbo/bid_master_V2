@@ -1,27 +1,65 @@
-"use client";
+'use client';
 
-import Link from "next/link";
-import { FileSearch, BarChart3, FileText, ArrowRight, Brain, Shield, Zap, LogIn, UserPlus } from "lucide-react";
-import { useAuthStore } from "@/stores/auth-store";
+import Link from 'next/link';
+import {
+  FileSearch,
+  BarChart3,
+  FileText,
+  ArrowRight,
+  Brain,
+  Shield,
+  Zap,
+  LogIn,
+  UserPlus,
+  ArrowUpRight,
+} from 'lucide-react';
+import { useAuthStore } from '@/stores/auth-store';
 
 const features = [
   {
-    href: "/extract",
+    href: '/extract',
     icon: FileSearch,
-    title: "要素提取",
-    desc: "上传招标文件，AI 自动提取资质要求、评标办法、业绩门槛、定标方法、合同条款等八大关键要素",
+    title: '要素提取',
+    desc: '上传招标文件，AI 自动提取资质要求、评标办法、业绩门槛、定标方法、合同条款等八大关键要素',
   },
   {
-    href: "/simulate",
+    href: '/simulate',
     icon: FileText,
-    title: "模拟编制",
-    desc: "基于历史项目规律和区域特征，四步引导式生成模拟招标文件，支持多维度对比",
+    title: '模拟编制',
+    desc: '基于历史项目规律和区域特征，四步引导式生成模拟招标文件，支持多维度对比',
   },
   {
-    href: "/statistics",
+    href: '/statistics',
     icon: BarChart3,
-    title: "开标分析",
-    desc: "智能解析开标一览表，自动计算报价排名、降价幅度、离散系数，生成分析报告",
+    title: '开标分析',
+    desc: '智能解析开标一览表，自动计算报价排名、降价幅度、离散系数，生成分析报告',
+  },
+];
+
+const insightCards = [
+  {
+    href: '/settings',
+    label: 'AI 模型',
+    value: 'AI大模型+',
+    desc: '统一配置模型供应商与能力偏好',
+    icon: Brain,
+    className: 'md:col-span-2 bg-card',
+  },
+  {
+    href: '/extract',
+    label: '文件格式',
+    value: '6 种',
+    desc: '覆盖 PDF、Word、Excel 等主流招投标文件',
+    icon: Shield,
+    className: 'bg-card',
+  },
+  {
+    href: '/statistics',
+    label: '平均响应',
+    value: '~10s',
+    desc: '快速解析开标报价并输出可读分析',
+    icon: Zap,
+    className: 'bg-card',
   },
 ];
 
@@ -73,28 +111,34 @@ export default function HomePage() {
         )}
       </div>
 
-      <div className="grid grid-cols-3 gap-6">
-        {[
-          { label: "AI 模型", value: "AI大模型+", icon: Brain },
-          { label: "文件格式", value: "6 种", icon: Shield },
-          { label: "平均响应", value: "~10s", icon: Zap },
-        ].map((s) => (
-          <div key={s.label} className="flex items-center gap-5 p-6 bg-card rounded-xl border border-border">
-            <div className="h-12 w-12 rounded-lg bg-primary/8 flex items-center justify-center shrink-0">
-              <s.icon className="h-6 w-6 text-primary" />
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
+        {insightCards.map(card => (
+          <Link
+            key={card.label}
+            href={card.href}
+            className={`group rounded-2xl border border-border p-6 shadow-sm transition-all hover:-translate-y-0.5 hover:border-primary/25 hover:shadow-md ${card.className}`}
+          >
+            <div className="flex min-h-32 flex-col justify-between gap-5">
+              <div className="flex items-start justify-between gap-4">
+                <div className="h-12 w-12 rounded-xl bg-primary/10 flex items-center justify-center shrink-0 transition-colors group-hover:bg-primary/15">
+                  <card.icon className="h-6 w-6 text-primary" />
+                </div>
+                <ArrowUpRight className="h-4 w-4 text-muted-foreground transition-colors group-hover:text-primary" />
+              </div>
+              <div>
+                <p className="text-2xl font-bold text-foreground tracking-tight">{card.value}</p>
+                <p className="text-sm font-medium text-foreground mt-1">{card.label}</p>
+                <p className="text-xs text-muted-foreground mt-2 leading-relaxed">{card.desc}</p>
+              </div>
             </div>
-            <div>
-              <p className="text-xl font-bold text-foreground tracking-tight">{s.value}</p>
-              <p className="text-xs text-muted-foreground mt-0.5">{s.label}</p>
-            </div>
-          </div>
+          </Link>
         ))}
       </div>
 
       <div>
         <h2 className="text-lg font-semibold text-foreground mb-6">核心功能</h2>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          {features.map((f) => (
+          {features.map(f => (
             <Link
               key={f.href}
               href={f.href}

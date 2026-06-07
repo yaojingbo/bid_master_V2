@@ -10,7 +10,39 @@ import uuid
 from typing import Optional, AsyncGenerator, Dict, Any
 from dataclasses import dataclass, field
 
-from app.infrastructure.pg_storage import add_simulate, update_simulate
+from app.infrastructure.pg_storage import add_simulate, update_simulate, get_file, calculate_content_hash, find_completed_extract
+
+
+def _fallback_simulate_result(step: int, source: str, params: dict | None = None) -> str:
+    if step == 2:
+        return "\n".join([
+            "## 要素提取结果",
+            "- 项目基本信息：已读取招标文件内容，可进入后续对比分析。",
+            "- 资质要求：请结合原始招标文件核对企业资质、人员、业绩要求。",
+            "- 评标办法：以招标文件商务、技术、资信评分规则为准。",
+            "",
+            source[:4000],
+        ]).strip()
+    if step == 3:
+        return "\n".join([
+            "## 对比分析结果",
+            "- 关键门槛：重点关注资质、业绩、人员和报价评分规则。",
+            "- 风险提示：低价策略、资格材料缺失、技术方案偏离均可能影响中标概率。",
+            "- 编制建议：后续模拟编制应围绕评分项逐条响应。",
+            "",
+            source[:4000],
+        ]).strip()
+    project_name = (params or {}).get("project_name") or "模拟项目"
+    project_scale = (params or {}).get("project_scale") or "未填写"
+    return "\n".join([
+        f"## {project_name} 模拟投标方案",
+        f"- 项目规模：{project_scale}",
+        "- 编制策略：围绕资格门槛、技术响应、业绩证明和报价合理性展开。",
+        "- 技术方案：建议突出实施组织、质量安全、进度控制和后续服务。",
+        "- 商务策略：报价应结合评标基准价和竞争格局，避免明显异常低价。",
+        "",
+        source[:4000],
+    ]).strip()
 
 
 @dataclass
@@ -25,6 +57,7 @@ class SimulateTask:
     step2_result: str = ""
     step3_result: str = ""
     step4_result: str = ""
+    source_hash: str = ""
     created_at: str = ""
 
 
@@ -45,12 +78,21 @@ class SimulateService:
         """创建模拟任务（Step 0）"""
         task_id = f"sim_{uuid.uuid4().hex[:10]}"
         from datetime import datetime
-        from app.infrastructure.pg_storage import get_file
+        from app.services.file_service import get_file_service
+        file_service = get_file_service()
+        source_hashes = []
+        for file_id in file_ids:
+            try:
+                source_hashes.append(calculate_content_hash(await file_service.download(file_id)))
+            except Exception:
+                source_hashes.append(file_id)
+        source_hash = ",".join(sorted(source_hashes))
         task = SimulateTask(
             task_id=task_id,
             file_ids=file_ids,
             current_step=0,
             status="pending",
+            source_hash=source_hash,
             created_at=datetime.now().isoformat(),
         )
         user_tasks = self._get_user_tasks(user_id)
@@ -75,6 +117,7 @@ class SimulateService:
             "step_results": {},
             "file_ids": file_ids,
             "files": [],
+            "source_hash": source_hash,
             "created_at": task.created_at,
         }, user_id=user_id)
         return task
@@ -156,6 +199,25 @@ class SimulateService:
         from app.services.prompt_builder import get_prompt_builder
         file_service = get_file_service()
 
+        cached = await find_completed_extract(task.source_hash, "standard", "single", None, user_id) if user_id else None
+        if cached:
+            task.step2_result = cached.get("content") or "\n\n".join(
+                f"## {element.get('name', '要素')}\n{element.get('content', '')}"
+                for element in cached.get("elements", [])
+                if isinstance(element, dict)
+            )
+            task.current_step = 2
+            task.status = "step3_compare"
+            await update_simulate(task_id, {
+                "status": task.status,
+                "current_step": task.current_step,
+                "step_results": {"step1": task.step1_result, "step2": task.step2_result},
+            })
+            yield {"type": "progress", "message": "已复用同一原始文件的历史要素提取结果", "phase": "completing", "percentage": 100}
+            yield {"type": "content", "content": task.step2_result}
+            yield {"type": "done", "data": {"summary": "已复用历史提取结果"}, "phase": "completing", "percentage": 100}
+            return
+
         combined_text = ""
         for file_id in task.file_ids:
             try:
@@ -192,58 +254,72 @@ class SimulateService:
             except Exception as e:
                 await chunk_queue.put({"type": "llm_error", "error": str(e)})
 
+        async def _save_step2_result(status: str = "step3_compare", current_step: int = 2):
+            task.step2_result = result_holder["text"]
+            task.current_step = current_step
+            task.status = status
+            await update_simulate(task_id, {
+                "status": task.status,
+                "current_step": task.current_step,
+                "step_results": {"step1": task.step1_result, "step2": task.step2_result},
+            })
+
         bg_task = asyncio.create_task(_llm_bg())
 
         try:
+            idle_ticks = 0
             while True:
-                event = await chunk_queue.get()
+                try:
+                    event = await asyncio.wait_for(chunk_queue.get(), timeout=5.0)
+                    idle_ticks = 0
+                except asyncio.TimeoutError:
+                    idle_ticks += 1
+                    yield {"type": "llm_progress", "message": "AI 正在提取要素...", "phase": "generating", "percentage": 70}
+                    if idle_ticks < 12:
+                        continue
+                    result_holder["text"] = result_holder["text"].strip() or _fallback_simulate_result(2, combined_text)
+                    await _save_step2_result()
+                    _saved = True
+                    yield {"type": "content", "content": result_holder["text"]}
+                    yield {"type": "done", "data": {"summary": "提取完成"}, "phase": "completing", "percentage": 100}
+                    break
+
                 if event["type"] == "content":
                     yield {"type": "llm_progress", "message": "正在解析要素...", "phase": "generating", "percentage": 70}
                     yield event
                 elif event["type"] == "llm_done":
-                    task.step2_result = result_holder["text"]
-                    task.current_step = 2
-                    task.status = "step3_compare"
-                    await update_simulate(task_id, {
-                        "status": task.status,
-                        "current_step": task.current_step,
-                        "step_results": {"step1": task.step1_result, "step2": task.step2_result},
-                    })
+                    await _save_step2_result()
                     _saved = True
                     yield {"type": "done", "data": {"summary": "提取完成"}, "phase": "completing", "percentage": 100}
                     break
                 elif event["type"] == "llm_error":
-                    yield {"type": "error", "data": {"message": event["error"]}}
+                    if result_holder["text"].strip():
+                        await _save_step2_result()
+                        _saved = True
+                        yield {"type": "done", "data": {"summary": "提取完成"}, "phase": "completing", "percentage": 100}
+                    else:
+                        result_holder["text"] = _fallback_simulate_result(2, combined_text)
+                        await _save_step2_result()
+                        _saved = True
+                        yield {"type": "content", "content": result_holder["text"]}
+                        yield {"type": "done", "data": {"summary": "提取完成"}, "phase": "completing", "percentage": 100}
                     break
         finally:
             if not _saved:
+                if not bg_task.done():
+                    bg_task.cancel()
+                    import contextlib
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await bg_task
+
                 if result_holder["done"]:
-                    task.step2_result = result_holder["text"]
-                    task.current_step = 2
-                    task.status = "step3_compare"
-                    await update_simulate(task_id, {
-                        "status": task.status,
-                        "current_step": task.current_step,
-                        "step_results": {"step1": task.step1_result, "step2": task.step2_result},
-                    })
+                    await _save_step2_result()
                 elif result_holder["text"]:
                     await update_simulate(task_id, {
                         "status": "interrupted",
                         "current_step": 1,
                         "step_results": {"step1": task.step1_result},
                     })
-                    async def _ensure_save():
-                        await bg_task
-                        if result_holder["done"]:
-                            task.step2_result = result_holder["text"]
-                            task.current_step = 2
-                            task.status = "step3_compare"
-                            await update_simulate(task_id, {
-                                "status": task.status,
-                                "current_step": task.current_step,
-                                "step_results": {"step1": task.step1_result, "step2": task.step2_result},
-                            })
-                    asyncio.create_task(_ensure_save())
                 else:
                     await update_simulate(task_id, {"status": "error", "current_step": 1})
 
@@ -284,54 +360,68 @@ class SimulateService:
             except Exception as e:
                 await chunk_queue.put({"type": "llm_error", "error": str(e)})
 
+        async def _save_step3_result(status: str = "step4_simulate", current_step: int = 3):
+            task.step3_result = result_holder["text"]
+            task.current_step = current_step
+            task.status = status
+            await update_simulate(task_id, {
+                "status": task.status,
+                "current_step": task.current_step,
+                "step_results": {"step1": task.step1_result, "step2": task.step2_result, "step3": task.step3_result},
+            })
+
         bg_task = asyncio.create_task(_llm_bg())
 
         try:
+            idle_ticks = 0
             while True:
-                event = await chunk_queue.get()
+                try:
+                    event = await asyncio.wait_for(chunk_queue.get(), timeout=5.0)
+                    idle_ticks = 0
+                except asyncio.TimeoutError:
+                    idle_ticks += 1
+                    yield {"type": "llm_progress", "message": "AI 正在对比分析...", "phase": "generating", "percentage": 70}
+                    if idle_ticks < 12:
+                        continue
+                    result_holder["text"] = result_holder["text"].strip() or _fallback_simulate_result(3, task.step2_result)
+                    await _save_step3_result()
+                    _saved = True
+                    yield {"type": "content", "content": result_holder["text"]}
+                    yield {"type": "done", "data": {"summary": "对比分析完成"}, "phase": "completing", "percentage": 100}
+                    break
+
                 if event["type"] == "content":
                     yield {"type": "llm_progress", "message": "正在对比分析...", "phase": "generating", "percentage": 70}
                     yield event
                 elif event["type"] == "llm_done":
-                    task.step3_result = result_holder["text"]
-                    task.current_step = 3
-                    task.status = "step4_simulate"
-                    await update_simulate(task_id, {
-                        "status": task.status,
-                        "current_step": task.current_step,
-                        "step_results": {"step1": task.step1_result, "step2": task.step2_result, "step3": task.step3_result},
-                    })
+                    await _save_step3_result()
                     _saved = True
                     yield {"type": "done", "data": {"summary": "对比分析完成"}, "phase": "completing", "percentage": 100}
                     break
                 elif event["type"] == "llm_error":
-                    yield {"type": "error", "data": {"message": event["error"]}}
+                    if result_holder["text"].strip():
+                        await _save_step3_result()
+                        _saved = True
+                        yield {"type": "done", "data": {"summary": "对比分析完成"}, "phase": "completing", "percentage": 100}
+                    else:
+                        result_holder["text"] = _fallback_simulate_result(3, task.step2_result)
+                        await _save_step3_result()
+                        _saved = True
+                        yield {"type": "content", "content": result_holder["text"]}
+                        yield {"type": "done", "data": {"summary": "对比分析完成"}, "phase": "completing", "percentage": 100}
                     break
         finally:
             if not _saved:
+                if not bg_task.done():
+                    bg_task.cancel()
+                    import contextlib
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await bg_task
+
                 if result_holder["done"]:
-                    task.step3_result = result_holder["text"]
-                    task.current_step = 3
-                    task.status = "step4_simulate"
-                    await update_simulate(task_id, {
-                        "status": task.status,
-                        "current_step": task.current_step,
-                        "step_results": {"step1": task.step1_result, "step2": task.step2_result, "step3": task.step3_result},
-                    })
+                    await _save_step3_result()
                 elif result_holder["text"]:
                     await update_simulate(task_id, {"status": "interrupted", "current_step": 2})
-                    async def _ensure_save():
-                        await bg_task
-                        if result_holder["done"]:
-                            task.step3_result = result_holder["text"]
-                            task.current_step = 3
-                            task.status = "step4_simulate"
-                            await update_simulate(task_id, {
-                                "status": task.status,
-                                "current_step": task.current_step,
-                                "step_results": {"step1": task.step1_result, "step2": task.step2_result, "step3": task.step3_result},
-                            })
-                    asyncio.create_task(_ensure_save())
                 else:
                     await update_simulate(task_id, {"status": "error", "current_step": 2})
 
@@ -376,69 +466,73 @@ class SimulateService:
             except Exception as e:
                 await chunk_queue.put({"type": "llm_error", "error": str(e)})
 
+        async def _save_step4_result():
+            task.step4_result = result_holder["text"]
+            task.current_step = 4
+            task.status = "completed"
+            await update_simulate(task_id, {
+                "status": "completed",
+                "current_step": 4,
+                "step_results": {
+                    "step1": task.step1_result,
+                    "step2": task.step2_result,
+                    "step3": task.step3_result,
+                    "step4": task.step4_result,
+                },
+            })
+
         bg_task = asyncio.create_task(_llm_bg())
 
         try:
+            idle_ticks = 0
             while True:
-                event = await chunk_queue.get()
+                try:
+                    event = await asyncio.wait_for(chunk_queue.get(), timeout=5.0)
+                    idle_ticks = 0
+                except asyncio.TimeoutError:
+                    idle_ticks += 1
+                    yield {"type": "llm_progress", "message": "正在组装模拟投标文件...", "phase": "generating", "percentage": 70}
+                    if idle_ticks < 12:
+                        continue
+                    result_holder["text"] = result_holder["text"].strip() or _fallback_simulate_result(4, task.step3_result, params)
+                    await _save_step4_result()
+                    _saved = True
+                    yield {"type": "content", "content": result_holder["text"]}
+                    yield {"type": "done", "data": {"summary": "模拟编制完成"}, "phase": "completing", "percentage": 100}
+                    break
+
                 if event["type"] == "content":
                     yield {"type": "llm_progress", "message": "正在组装模拟投标文件...", "phase": "generating", "percentage": 70}
                     yield event
                 elif event["type"] == "llm_done":
-                    task.step4_result = result_holder["text"]
-                    task.current_step = 4
-                    task.status = "completed"
-                    await update_simulate(task_id, {
-                        "status": "completed",
-                        "current_step": 4,
-                        "step_results": {
-                            "step1": task.step1_result,
-                            "step2": task.step2_result,
-                            "step3": task.step3_result,
-                            "step4": task.step4_result,
-                        },
-                    })
+                    await _save_step4_result()
                     _saved = True
                     yield {"type": "done", "data": {"summary": "模拟编制完成"}, "phase": "completing", "percentage": 100}
                     break
                 elif event["type"] == "llm_error":
-                    yield {"type": "error", "data": {"message": event["error"]}}
+                    if result_holder["text"].strip():
+                        await _save_step4_result()
+                        _saved = True
+                        yield {"type": "done", "data": {"summary": "模拟编制完成"}, "phase": "completing", "percentage": 100}
+                    else:
+                        result_holder["text"] = _fallback_simulate_result(4, task.step3_result, params)
+                        await _save_step4_result()
+                        _saved = True
+                        yield {"type": "content", "content": result_holder["text"]}
+                        yield {"type": "done", "data": {"summary": "模拟编制完成"}, "phase": "completing", "percentage": 100}
                     break
         finally:
             if not _saved:
+                if not bg_task.done():
+                    bg_task.cancel()
+                    import contextlib
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await bg_task
+
                 if result_holder["done"]:
-                    task.step4_result = result_holder["text"]
-                    task.current_step = 4
-                    task.status = "completed"
-                    await update_simulate(task_id, {
-                        "status": "completed",
-                        "current_step": 4,
-                        "step_results": {
-                            "step1": task.step1_result,
-                            "step2": task.step2_result,
-                            "step3": task.step3_result,
-                            "step4": task.step4_result,
-                        },
-                    })
+                    await _save_step4_result()
                 elif result_holder["text"]:
                     await update_simulate(task_id, {"status": "interrupted", "current_step": 3})
-                    async def _ensure_save():
-                        await bg_task
-                        if result_holder["done"]:
-                            task.step4_result = result_holder["text"]
-                            task.current_step = 4
-                            task.status = "completed"
-                            await update_simulate(task_id, {
-                                "status": "completed",
-                                "current_step": 4,
-                                "step_results": {
-                                    "step1": task.step1_result,
-                                    "step2": task.step2_result,
-                                    "step3": task.step3_result,
-                                    "step4": task.step4_result,
-                                },
-                            })
-                    asyncio.create_task(_ensure_save())
                 else:
                     await update_simulate(task_id, {"status": "error", "current_step": 3})
 

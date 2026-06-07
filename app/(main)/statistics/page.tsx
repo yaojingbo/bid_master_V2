@@ -56,6 +56,12 @@ const statisticsPhases = [
   { key: "generating", label: "生成报告" },
 ];
 
+const deriveStatisticsPhase = (percentage: number | null) => {
+  if (percentage == null || percentage < 10) return "connecting";
+  if (percentage < 85) return "analyzing";
+  return "generating";
+};
+
 interface AnalysisResult {
   bidder_count: number;
   meta: {
@@ -259,15 +265,29 @@ export default function StatisticsPage() {
         const record = json.data;
         if (record.status === "completed") {
           clearInterval(interval);
-          setAiContent(record.ai_analysis || "");
+          setAiContent(record.ai_analysis || "AI 综合分析已完成，暂无报告内容");
           setAiStreaming(false);
           setAnalysisTaskId(null);
+          useTaskStore.getState().updateStatistics({
+            result,
+            aiContent: record.ai_analysis || "AI 综合分析已完成，暂无报告内容",
+            aiStreaming: false,
+            uploadedFile,
+            analysisTaskId: null,
+          });
         } else if (record.status === "error") {
           clearInterval(interval);
           const errMsg = record.ai_analysis || "分析出错，请重试";
           setAiContent(errMsg);
           setAiStreaming(false);
           setAnalysisTaskId(null);
+          useTaskStore.getState().updateStatistics({
+            result,
+            aiContent: errMsg,
+            aiStreaming: false,
+            uploadedFile,
+            analysisTaskId: null,
+          });
         }
         // status === "running" or "partial" → continue polling
       } catch {
@@ -351,6 +371,7 @@ export default function StatisticsPage() {
     const file = e.target.files?.[0];
     if (!file) return;
     uploadedFileRef.current = file;
+    e.target.value = '';
 
     // 用户新上传文件时清除上次分析结果
     setResult(null);
@@ -552,12 +573,15 @@ export default function StatisticsPage() {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       const taskId = data.task_id;
+      if (data.cached) {
+        setAiContent("已复用同一原始文件的历史 AI 综合分析结果，正在加载内容...");
+      }
 
       setAnalysisTaskId(taskId);
       // 立即持久化，确保切走后能恢复
       useTaskStore.getState().updateStatistics({
         result,
-        aiContent: "",
+        aiContent: data.cached ? "已复用同一原始文件的历史 AI 综合分析结果，正在加载内容..." : "",
         aiStreaming: true,
         uploadedFile,
         analysisTaskId: taskId,
@@ -1200,7 +1224,7 @@ export default function StatisticsPage() {
                 {aiStreaming && (
                   <TaskProgress
                     phases={statisticsPhases}
-                    currentPhase="analyzing"
+                    currentPhase={deriveStatisticsPhase(aiPercentage)}
                     percentage={aiPercentage}
                     message={`AI 正在分析中（${activeProvider}/${activeModel || "default"}）...`}
                     isActive={aiStreaming}

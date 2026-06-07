@@ -4,14 +4,194 @@ Extract service for document element extraction using LLM.
 """
 import io
 import logging
+import re
 from typing import AsyncGenerator, Dict, Any, Optional
 import json
 
 from app.services.llm_service import LLMService
 from app.services.file_service import FileService
-from app.infrastructure.pg_storage import add_extract, get_file
+from app.infrastructure.pg_storage import add_extract, get_file, calculate_content_hash, find_completed_extract
 
 logger = logging.getLogger(__name__)
+
+
+def _strip_json_fence(text: str) -> str:
+    stripped = text.strip()
+    if not stripped.startswith("```"):
+        return stripped
+
+    first_newline = stripped.find("\n")
+    if first_newline == -1:
+        return stripped
+
+    body = stripped[first_newline + 1:]
+    if body.rstrip().endswith("```"):
+        body = body.rstrip()[:-3]
+    return body.strip()
+
+
+def _complete_json_candidate(text: str) -> str:
+    stack: list[str] = []
+    in_string = False
+    escaped = False
+
+    for char in text:
+        if escaped:
+            escaped = False
+            continue
+        if char == "\\" and in_string:
+            escaped = True
+            continue
+        if char == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if char in "[{":
+            stack.append(char)
+        elif char == "]" and stack and stack[-1] == "[":
+            stack.pop()
+        elif char == "}" and stack and stack[-1] == "{":
+            stack.pop()
+
+    suffix = "".join("}" if char == "{" else "]" for char in reversed(stack))
+    return text + suffix
+
+
+def _find_json_start(text: str) -> int:
+    return min((idx for idx in (text.find("{"), text.find("[")) if idx != -1), default=-1)
+
+
+def _find_balanced_json_end(text: str) -> int | None:
+    stack: list[str] = []
+    in_string = False
+    escaped = False
+
+    for index, char in enumerate(text):
+        if escaped:
+            escaped = False
+            continue
+        if char == "\\" and in_string:
+            escaped = True
+            continue
+        if char == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if char in "[{":
+            stack.append(char)
+        elif char == "]" and stack and stack[-1] == "[":
+            stack.pop()
+        elif char == "}" and stack and stack[-1] == "{":
+            stack.pop()
+        if not stack and char in "]}":
+            return index + 1
+
+    return None
+
+
+def _parse_llm_json_response(response: str) -> tuple[str, list[dict[str, Any]]]:
+    candidate = _strip_json_fence(response)
+    json_start = _find_json_start(candidate)
+    if json_start == -1:
+        raise json.JSONDecodeError("未找到 JSON 起始符", candidate, 0)
+
+    candidate = candidate[json_start:].strip()
+    json_end = _find_balanced_json_end(candidate)
+    if json_end is not None:
+        candidate = candidate[:json_end]
+
+    try:
+        parsed = json.loads(candidate)
+        json_str = candidate
+    except json.JSONDecodeError:
+        candidate = _complete_json_candidate(candidate)
+        parsed = json.loads(candidate)
+        json_str = candidate
+
+    if isinstance(parsed, dict) and "elements" in parsed:
+        found_elements = parsed["elements"]
+    elif isinstance(parsed, dict):
+        found_elements = next(
+            (v for v in parsed.values() if isinstance(v, list) and v and isinstance(v[0], dict)),
+            [],
+        )
+    elif isinstance(parsed, list):
+        found_elements = parsed
+    else:
+        found_elements = []
+
+    return json_str, [e for e in found_elements if isinstance(e, dict)]
+
+
+def _parse_markdown_elements_response(response: str) -> list[dict[str, str]]:
+    text = response.strip()
+    if not text:
+        return []
+
+    element_names = [
+        "项目基本信息",
+        "资质要求",
+        "业绩要求",
+        "人员要求",
+        "评标办法",
+        "分值分配与评分细则",
+        "定标方法",
+        "合同条款",
+    ]
+    name_pattern = "|".join(re.escape(name) for name in element_names)
+    heading_patterns = [
+        re.compile(rf"^\s*(?:#{{1,6}}\s*)?\*\*({name_pattern})\*\*\s*[:：]?\s*(.*)$"),
+        re.compile(rf"^\s*(?:#{{1,6}}\s*)?(?:\d+[.、]\s*)?({name_pattern})\s*[:：]?\s*(.*)$"),
+    ]
+
+    grouped: dict[str, list[str]] = {name: [] for name in element_names}
+    current_name: str | None = None
+    current_lines: list[str] = []
+
+    def flush_current() -> None:
+        nonlocal current_name, current_lines
+        if current_name and "\n".join(current_lines).strip():
+            grouped[current_name].append("\n".join(current_lines).strip())
+        current_name = None
+        current_lines = []
+
+    for line in text.splitlines():
+        matched_name = None
+        trailing_content = ""
+        for pattern in heading_patterns:
+            match = pattern.match(line)
+            if match:
+                matched_name = match.group(1)
+                trailing_content = match.group(2).strip() if len(match.groups()) > 1 else ""
+                break
+
+        if matched_name:
+            flush_current()
+            current_name = matched_name
+            if trailing_content:
+                current_lines.append(trailing_content)
+        elif current_name:
+            current_lines.append(line)
+
+    flush_current()
+
+    return [
+        {"name": name, "content": "\n\n---\n\n".join(parts)}
+        for name, parts in grouped.items()
+        if parts
+    ]
+
+
+def _normalize_elements(elements: list[dict[str, Any]], fallback_text: str) -> list[dict[str, Any]]:
+    if len(elements) != 1:
+        return elements
+
+    element = elements[0]
+    content = str(element.get("content") or fallback_text or "")
+    split_elements = _parse_markdown_elements_response(content)
+    return split_elements if len(split_elements) > 1 else elements
 
 
 def extract_text_from_pdf(content: bytes, max_pages: int = 30) -> tuple[str, bool]:
@@ -172,6 +352,18 @@ class ExtractService:
             yield {"type": "progress", "message": "正在读取文档...", "phase": "reading", "percentage": 5}
 
             content = await self.file_service.download(document_id)
+            source_hash = calculate_content_hash(content)
+            cached = await find_completed_extract(source_hash, template_type, mode, elements, user_id) if user_id else None
+            if cached:
+                yield {"type": "progress", "message": "已复用同一原始文件的历史要素提取结果", "phase": "extracting", "percentage": 90}
+                cached_elements = cached.get("elements") or []
+                if cached_elements:
+                    for element in cached_elements:
+                        yield {"type": "element", "data": element, "phase": "extracting", "percentage": 90}
+                elif cached.get("content"):
+                    yield {"type": "element", "data": {"name": "分析结果", "content": cached["content"]}, "phase": "extracting", "percentage": 90}
+                yield {"type": "done", "data": {"summary": "已复用历史提取结果"}, "phase": "extracting", "percentage": 100}
+                return
 
             text_content, needs_ocr = extract_text_from_content(content)
 
@@ -226,7 +418,7 @@ class ExtractService:
 
             # LLM 流式调用 + 进度推送 + JSON 解析
             async for event in self._stream_llm_with_progress(
-                provider, messages, model, document_id, template_type, user_id
+                provider, messages, model, document_id, template_type, user_id, source_hash=source_hash, result_mode=mode
             ):
                 yield event
 
@@ -241,8 +433,10 @@ class ExtractService:
         file_id: str,
         template_type: str,
         user_id: Optional[str] = None,
+        source_hash: Optional[str] = None,
+        result_mode: Optional[str] = None,
     ) -> AsyncGenerator[Dict[str, Any], None]:
-        """LLM 流式调用 + 进度推送 + JSON 解析。LLM 在后台 Task 中运行，不受 SSE 断连影响。"""
+        """LLM 流式调用 + 进度推送 + JSON 解析。"""
         import asyncio
         chunk_queue: asyncio.Queue = asyncio.Queue()
         result_holder = {"text": "", "done": False, "error": None}
@@ -250,6 +444,8 @@ class ExtractService:
 
         file_record = await get_file(file_id)
         file_name = file_record.get("original_name", "") if file_record else ""
+        effective_source_hash = source_hash or (file_record.get("file_hash") if file_record else None)
+        effective_mode = result_mode or provider
 
         resolved_model = model or self.llm.llm.MODEL_MAP.get(provider, "unknown")
         if "/" in resolved_model:
@@ -272,128 +468,116 @@ class ExtractService:
         background_task = asyncio.create_task(_llm_background_task())
 
         try:
+            last_pct = 30
             while True:
-                event = await chunk_queue.get()
+                try:
+                    event = await asyncio.wait_for(chunk_queue.get(), timeout=2.0)
+                except asyncio.TimeoutError:
+                    if not result_holder["done"] and not result_holder["error"]:
+                        last_pct = min(last_pct + 1, 88)
+                        yield {"type": "llm_progress", "message": f"AI 正在分析（{provider}/{resolved_model}）... {last_pct}%", "phase": "analyzing", "percentage": last_pct}
+                    continue
+
                 if event["type"] == "chunk":
                     if event["count"] % 5 == 0:
                         pct = min(30 + event["count"] // 2, 88)
-                        yield {"type": "llm_progress", "message": f"AI 正在分析（{provider}/{resolved_model}）... {pct}%", "phase": "analyzing", "percentage": pct}
+                        last_pct = max(last_pct, pct)
+                        yield {"type": "llm_progress", "message": f"AI 正在分析（{provider}/{resolved_model}）... {last_pct}%", "phase": "analyzing", "percentage": last_pct}
                 elif event["type"] == "llm_done":
                     # LLM 完成，解析并保存
                     full_response = result_holder["text"]
                     try:
-                        json_start = full_response.find("{")
-                        json_end = full_response.rfind("}") + 1
-                        if json_start != -1 and json_end > json_start:
-                            json_str = full_response[json_start:json_end]
-                            parsed = json.loads(json_str)
-                            if isinstance(parsed, dict) and "elements" in parsed:
-                                found_elements = parsed["elements"]
-                            elif isinstance(parsed, dict):
-                                found_elements = next(
-                                    (v for v in parsed.values()
-                                     if isinstance(v, list) and v and isinstance(v[0], dict)),
-                                    [],
-                                )
-                            elif isinstance(parsed, list):
-                                found_elements = parsed
-                            else:
-                                found_elements = []
+                        json_str, found_elements = _parse_llm_json_response(full_response)
+                        found_elements = _normalize_elements(found_elements, full_response)
 
-                            await add_extract({
-                                "file_id": file_id,
-                                "file_name": file_name,
-                                "template_type": template_type,
-                                "mode": provider,
-                                "content": json_str,
-                                "status": "completed",
-                            }, user_id=user_id)
-                            _saved = True
-
-                            for element in found_elements:
-                                yield {"type": "element", "data": element, "phase": "extracting", "percentage": 90}
-                            if not found_elements and full_response.strip():
-                                yield {"type": "element", "data": {"name": "分析结果", "content": full_response.strip()}, "phase": "extracting", "percentage": 90}
-                            yield {
-                                "type": "done",
-                                "data": {"summary": "文档分析完成", "elementCount": max(len(found_elements), 1 if full_response.strip() else 0)},
-                                "phase": "extracting",
-                                "percentage": 100,
-                            }
-                        else:
-                            await add_extract({
-                                "file_id": file_id,
-                                "file_name": file_name,
-                                "template_type": template_type,
-                                "mode": provider,
-                                "content": full_response,
-                                "status": "completed_text",
-                            }, user_id=user_id)
-                            _saved = True
-                            if full_response.strip():
-                                yield {"type": "element", "data": {"name": "分析结果", "content": full_response.strip()}, "phase": "extracting", "percentage": 90}
-                            yield {
-                                "type": "done",
-                                "data": {"summary": "文档分析完成（文本格式）", "elementCount": 1 if full_response.strip() else 0},
-                            }
-                    except json.JSONDecodeError:
                         await add_extract({
                             "file_id": file_id,
                             "file_name": file_name,
                             "template_type": template_type,
-                            "mode": provider,
-                            "content": full_response,
-                            "status": "completed_json_error",
+                            "mode": effective_mode,
+                            "content": json_str,
+                            "elements": found_elements,
+                            "status": "completed",
+                            "source_hash": effective_source_hash,
                         }, user_id=user_id)
                         _saved = True
-                        if full_response.strip():
+
+                        for element in found_elements:
+                            yield {"type": "element", "data": element, "phase": "extracting", "percentage": 90}
+                        if not found_elements and full_response.strip():
                             yield {"type": "element", "data": {"name": "分析结果", "content": full_response.strip()}, "phase": "extracting", "percentage": 90}
                         yield {
                             "type": "done",
-                            "data": {"summary": "文档分析完成，但JSON解析失败", "elementCount": 1 if full_response.strip() else 0},
+                            "data": {"summary": "文档分析完成", "elementCount": max(len(found_elements), 1 if full_response.strip() else 0)},
+                            "phase": "extracting",
+                            "percentage": 100,
                         }
+                    except json.JSONDecodeError:
+                        found_elements = _parse_markdown_elements_response(full_response)
+                        status = "completed_markdown" if found_elements else "completed_json_error"
+                        await add_extract({
+                            "file_id": file_id,
+                            "file_name": file_name,
+                            "template_type": template_type,
+                            "mode": effective_mode,
+                            "content": full_response,
+                            "elements": found_elements,
+                            "status": status,
+                            "source_hash": effective_source_hash,
+                        }, user_id=user_id)
+                        _saved = True
+                        if found_elements:
+                            for element in found_elements:
+                                yield {"type": "element", "data": element, "phase": "extracting", "percentage": 90}
+                            yield {
+                                "type": "done",
+                                "data": {"summary": "文档分析完成", "elementCount": len(found_elements)},
+                                "phase": "extracting",
+                                "percentage": 100,
+                            }
+                        else:
+                            if full_response.strip():
+                                yield {"type": "element", "data": {"name": "分析结果", "content": full_response.strip()}, "phase": "extracting", "percentage": 90}
+                            yield {
+                                "type": "done",
+                                "data": {"summary": "文档分析完成，但JSON解析失败", "elementCount": 1 if full_response.strip() else 0},
+                                "phase": "extracting",
+                                "percentage": 100,
+                            }
                     break
                 elif event["type"] == "llm_error":
                     yield {"type": "error", "data": {"message": event["error"]}}
                     break
 
         finally:
-            # SSE generator 被取消（客户端断连）时的处理
             if not _saved:
+                if not background_task.done():
+                    background_task.cancel()
+                    import contextlib
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await background_task
+
                 if result_holder["done"]:
                     full_response = result_holder["text"]
                     await add_extract({
                         "file_id": file_id,
                         "file_name": file_name,
                         "template_type": template_type,
-                        "mode": provider,
+                        "mode": effective_mode,
                         "content": full_response,
                         "status": "completed_disconnected",
+                        "source_hash": effective_source_hash,
                     }, user_id=user_id)
                 elif result_holder["text"]:
                     await add_extract({
                         "file_id": file_id,
                         "file_name": file_name,
                         "template_type": template_type,
-                        "mode": provider,
+                        "mode": effective_mode,
                         "content": result_holder["text"],
                         "status": "partial",
+                        "source_hash": effective_source_hash,
                     }, user_id=user_id)
-                    # 不取消 background_task，让它继续运行到完成
-                    # background_task 完成后会自动释放资源
-                    # 但我们需要确保它完成后也保存结果
-                    async def _ensure_save_on_completion():
-                        await background_task
-                        if result_holder["done"] and not _saved:
-                            await add_extract({
-                                "file_id": file_id,
-                                "file_name": file_name,
-                                "template_type": template_type,
-                                "mode": provider,
-                                "content": result_holder["text"],
-                                "status": "completed_background",
-                            }, user_id=user_id)
-                    asyncio.create_task(_ensure_save_on_completion())
 
     async def extract_batch_stream(
         self,
@@ -409,7 +593,7 @@ class ExtractService:
 
         try:
             total = len(file_ids)
-            yield {"type": "progress", "message": f"正在读取 {total} 个文件..."}
+            yield {"type": "progress", "message": f"正在读取 {total} 个文件...", "phase": "reading", "percentage": 5}
 
             # 并行下载 + 解析所有文件
             async def fetch_and_parse(fid: str) -> tuple[str, str]:
@@ -443,7 +627,7 @@ class ExtractService:
             if len(combined) > MAX_CHARS:
                 combined = combined[:MAX_CHARS] + f"\n\n[内容已截断，共 {len(combined)} 字符]"
 
-            yield {"type": "progress", "message": f"{success_count} 个文件读取完成，正在对比分析..."}
+            yield {"type": "progress", "message": f"{success_count} 个文件读取完成，正在对比分析...", "phase": "parsing", "percentage": 20}
 
             builder = get_prompt_builder()
             system_prompt = builder.build_extract_system_prompt("batch", elements)
@@ -454,7 +638,7 @@ class ExtractService:
                 {"role": "user", "content": user_prompt},
             ]
 
-            yield {"type": "progress", "message": "AI 正在对比分析多份招标文件..."}
+            yield {"type": "progress", "message": "AI 正在对比分析多份招标文件...", "phase": "analyzing", "percentage": 30}
 
             async for event in self._stream_llm_with_progress(
                 provider, messages, model, ",".join(file_ids), "batch", user_id
@@ -476,7 +660,7 @@ class ExtractService:
         from app.services.prompt_builder import get_prompt_builder
 
         try:
-            yield {"type": "progress", "message": "正在读取招标文件..."}
+            yield {"type": "progress", "message": "正在读取招标文件...", "phase": "reading", "percentage": 5}
 
             content = await self.file_service.download(file_id)
             text_content, needs_ocr = extract_text_from_content(content)
@@ -484,13 +668,13 @@ class ExtractService:
             # 图片型 PDF：触发 OCR 识别
             if needs_ocr:
                 logger.info("门槛分析触发 OCR: file_id=%s, provider=%s", file_id, provider)
-                yield {"type": "progress", "message": "检测到图片型 PDF，正在启动 OCR 识别..."}
+                yield {"type": "progress", "message": "检测到图片型 PDF，正在启动 OCR 识别...", "phase": "parsing", "percentage": 12}
                 try:
                     from app.services.ocr_service import ocr_pdf, resolve_vision_model
                     eff_provider, eff_model = resolve_vision_model(provider, model)
                     if (eff_provider, eff_model) != (provider, model):
                         logger.info("OCR 模型回退: %s/%s → %s/%s", provider, model, eff_provider, eff_model)
-                        yield {"type": "progress", "message": f"当前模型不支持图片识别，已切换到 {eff_provider}/{eff_model}"}
+                        yield {"type": "progress", "message": f"当前模型不支持图片识别，已切换到 {eff_provider}/{eff_model}", "phase": "parsing", "percentage": 13}
                     ocr_text = await ocr_pdf(content, eff_provider, eff_model, user_id)
                     logger.info("OCR 完成: %d 字符", len(ocr_text))
                     if ocr_text.strip():
@@ -502,7 +686,7 @@ class ExtractService:
                 yield {"type": "error", "data": {"message": "文档内容为空或无法解析"}}
                 return
 
-            yield {"type": "progress", "message": f"文档解析完成（{len(text_content)}字符），正在比对分析..."}
+            yield {"type": "progress", "message": f"文档解析完成（{len(text_content)}字符），正在比对分析...", "phase": "parsing", "percentage": 20}
 
             MAX_CHARS = 200000
             truncated = text_content[:MAX_CHARS]
@@ -518,7 +702,7 @@ class ExtractService:
                 {"role": "user", "content": user_prompt},
             ]
 
-            yield {"type": "progress", "message": "AI 正在逐项比对门槛要求..."}
+            yield {"type": "progress", "message": "AI 正在逐项比对门槛要求...", "phase": "analyzing", "percentage": 30}
 
             async for event in self._stream_llm_with_progress(
                 provider, messages, model, file_id, "threshold", user_id

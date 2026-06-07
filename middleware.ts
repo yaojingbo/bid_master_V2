@@ -2,8 +2,12 @@ import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 
 const protectedRoutes = ['/extract', '/simulate', '/statistics', '/database', '/settings'];
+const authDisabled = process.env.NEXT_PUBLIC_AUTH_DISABLED === 'true';
 
 export function middleware(request: NextRequest) {
+  if (authDisabled) {
+    return NextResponse.next();
+  }
   // 仅依赖客户端设置的 auth_status cookie（非 httpOnly）判断登录态。
   // 不使用 refresh_token（httpOnly），因为它可能过期/失效而 middleware 无法验证，
   // 导致已失效的 cookie 将用户困在 /login ↔ / 重定向循环中。

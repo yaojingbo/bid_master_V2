@@ -45,6 +45,7 @@ export function ExcelUploader({
     if (file) {
       setSelectedFile(file);
       onFileSelect(file);
+      e.target.value = '';
     }
   };
 

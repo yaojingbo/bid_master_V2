@@ -2,15 +2,25 @@
 Configuration management for Bid Master Backend.
 Reads settings from environment variables.
 """
-import os
 from functools import lru_cache
+from pathlib import Path
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+_BACKEND_DIR = Path(__file__).resolve().parents[1]
+_PROJECT_ROOT = _BACKEND_DIR.parents[1]
+_ENV_FILES = (
+    _PROJECT_ROOT / ".env",
+    _PROJECT_ROOT / ".env.local",
+    _BACKEND_DIR / ".env",
+    _BACKEND_DIR / ".env.local",
+)
 
 
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 
-    model_config = SettingsConfigDict(env_file=".env", case_sensitive=False, extra="allow")
+    model_config = SettingsConfigDict(env_file=_ENV_FILES, case_sensitive=False, extra="allow")
 
     # Database
     database_url: str = "postgresql://localhost:5432/bidmaster"
@@ -42,6 +52,10 @@ class Settings(BaseSettings):
     jwt_secret: str = "dev-secret-change-in-production"
     jwt_access_token_expire_minutes: int = 60
     jwt_refresh_token_expire_days: int = 7
+
+    # Auth
+    auth_disabled: bool = False
+    demo_mode: bool = False
 
     # File storage
     upload_dir: str = "./uploads"

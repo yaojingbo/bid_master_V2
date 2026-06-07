@@ -36,6 +36,33 @@ class LiteLLMService:
     def __init__(self):
         self.settings = get_settings()
 
+    async def _demo_complete(self, messages: list[dict], stream: bool = True) -> AsyncGenerator[str, None]:
+        user_text = "\n".join(str(message.get("content", "")) for message in messages if message.get("role") == "user")
+        if "JSON" in user_text or "json" in user_text or "elements" in user_text:
+            text = _json.dumps(
+                {
+                    "elements": [
+                        {"name": "项目基本信息", "content": "本地 demo 模式已读取上传文件，可继续验证要素提取流程。"},
+                        {"name": "资质要求", "content": "投标人需具备与项目相匹配的资质条件，具体以招标文件为准。"},
+                        {"name": "评标办法", "content": "建议重点核对价格分、技术分、商务分及否决条款。"},
+                    ]
+                },
+                ensure_ascii=False,
+            )
+        else:
+            text = "\n".join([
+                "## 本地 demo 分析结果",
+                "- 已在不调用外部 AI 的情况下完成演示流程。",
+                "- 上传、解析、任务推进和结果展示链路可用于本地功能验证。",
+                "- 正式分析请在 AI 设置中配置可用供应商 API Key。",
+            ])
+
+        if stream:
+            for index in range(0, len(text), 24):
+                yield text[index:index + 24]
+        else:
+            yield text
+
     async def _get_api_key(self, provider: str, user_id: str = None) -> str:
         """Get API key for provider. Checks user-stored key first, then falls back to env vars."""
         if user_id:
@@ -226,6 +253,11 @@ class LiteLLMService:
         Yields:
             Response chunks if streaming
         """
+        if self.settings.demo_mode or self.settings.auth_disabled:
+            async for chunk in self._demo_complete(messages, stream):
+                yield chunk
+            return
+
         # OpenAI 兼容第三方供应商走 httpx 直接调用
         if provider in self.OPENAI_COMPATIBLE_PROVIDERS:
             resolved_model = self._get_model_name(provider, model)

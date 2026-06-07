@@ -40,6 +40,7 @@ async def create_simulate_task(request: CreateSimulateRequest, current_user: dic
                 "currentStep": task.current_step,
                 "status": task.status,
                 "fileIds": task.file_ids,
+                "sourceHash": task.source_hash,
             }
         }
     except Exception as e:

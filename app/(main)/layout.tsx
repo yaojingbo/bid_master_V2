@@ -6,6 +6,7 @@ import { Sidebar } from "@/components/layout/Sidebar";
 import { useAuthStore } from "@/stores/auth-store";
 
 const protectedRoutes = ["/extract", "/simulate", "/statistics", "/database", "/settings"];
+const authDisabled = process.env.NEXT_PUBLIC_AUTH_DISABLED === "true";
 
 export default function MainLayout({
   children,
@@ -18,6 +19,7 @@ export default function MainLayout({
   const initialized = useRef(false);
 
   useEffect(() => {
+    if (authDisabled) return;
     if (initialized.current) return;
     initialized.current = true;
     // authReady 已为 true 说明刚完成 login/register，无需再 initAuth
@@ -29,6 +31,7 @@ export default function MainLayout({
 
   // initAuth 完成后，若用户未认证且在受保护路由，客户端侧回退重定向
   useEffect(() => {
+    if (authDisabled) return;
     if (!authReady) return;
     const isProtected = protectedRoutes.some(r => pathname.startsWith(r));
     if (!isAuthenticated && isProtected) {
@@ -37,7 +40,7 @@ export default function MainLayout({
   }, [authReady, isAuthenticated, pathname, router]);
 
   // authReady 为 false 时不渲染子页面，避免 accessToken 为 null 导致请求 401
-  if (!authReady) {
+  if (!authDisabled && !authReady) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background">
         <div className="animate-pulse text-muted-foreground">加载中...</div>

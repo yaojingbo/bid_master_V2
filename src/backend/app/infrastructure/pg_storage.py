@@ -4,10 +4,29 @@ Drop-in async replacement for mock_storage — same function signatures, persist
 """
 import json
 import uuid
+import hashlib
 from datetime import datetime, timezone
 from typing import Optional
 
 from app.infrastructure.database import get_database
+from app.infrastructure import mock_storage
+
+_USE_MOCK_STORAGE = False
+
+
+def use_mock_storage() -> bool:
+    return _USE_MOCK_STORAGE
+
+
+def enable_mock_storage() -> None:
+    global _USE_MOCK_STORAGE
+    _USE_MOCK_STORAGE = True
+
+
+def _mock_async(fn):
+    async def wrapper(*args, **kwargs):
+        return fn(*args, **kwargs)
+    return wrapper
 
 
 def _now() -> str:
@@ -16,6 +35,10 @@ def _now() -> str:
 
 def _new_id() -> str:
     return str(uuid.uuid4())[:8]
+
+
+def calculate_content_hash(content: bytes) -> str:
+    return hashlib.sha256(content).hexdigest()
 
 
 def _to_dt(val) -> Optional[datetime]:
@@ -69,12 +92,12 @@ async def add_file(record: dict, user_id: Optional[str] = None, encrypted_conten
         record["user_id"] = user_id
     db = await get_database()
     await db.execute(
-        """INSERT INTO files (id, original_name, path, size, type, user_id, encrypted_content, created_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        """INSERT INTO files (id, original_name, path, size, type, user_id, encrypted_content, file_hash, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
            ON CONFLICT (id) DO NOTHING""",
         record["id"], record.get("original_name", ""), record.get("path", ""),
         record.get("size", 0), record.get("type"), record.get("user_id"),
-        encrypted_content,
+        encrypted_content, record.get("file_hash"),
         _to_dt(record.get("created_at", _now())),
     )
     return record
@@ -138,6 +161,57 @@ async def get_file_content(file_id: str) -> Optional[bytes]:
     return row["encrypted_content"] if row and row["encrypted_content"] is not None else None
 
 
+async def find_completed_extract(source_hash: str, template_type: str, mode: str, elements: list[str] | None, user_id: str) -> Optional[dict]:
+    if use_mock_storage():
+        return None
+    db = await get_database()
+    rows = await db.fetch_all(
+        """SELECT * FROM extracts
+           WHERE user_id = $1 AND source_hash = $2 AND template_type = $3 AND mode = $4 AND status IN ('completed','completed_markdown')
+           ORDER BY created_at DESC LIMIT 20""",
+        user_id, source_hash, template_type, mode,
+    )
+    element_name_map = {
+        "basic_info": "项目基本信息",
+        "qualification": "资质要求",
+        "experience": "业绩要求",
+        "personnel": "人员要求",
+        "evaluation_method": "评标办法",
+        "scoring_details": "分值分配与评分细则",
+        "selection_method": "定标方法",
+        "contract_terms": "合同条款",
+    }
+    expected_names = {element_name_map.get(e, e) for e in elements} if elements else None
+    for row in rows:
+        if isinstance(row.get("elements"), str):
+            row["elements"] = json.loads(row["elements"])
+        stored_names = {e.get("name") for e in row.get("elements", []) if isinstance(e, dict)}
+        if expected_names and stored_names and not expected_names.issubset(stored_names):
+            continue
+        return _serialize_row(row)
+    return None
+
+
+async def find_completed_opening(source_hash: str, modules: list[str] | None, user_id: str, require_ai: bool = False) -> Optional[dict]:
+    if use_mock_storage():
+        return None
+    db = await get_database()
+    rows = await db.fetch_all(
+        """SELECT * FROM openings
+           WHERE user_id = $1 AND source_hash = $2 AND status = 'completed'
+           ORDER BY created_at DESC LIMIT 20""",
+        user_id, source_hash,
+    )
+    for row in rows:
+        if require_ai and not row.get("ai_analysis"):
+            continue
+        for key in ("meta", "bid_ranking", "bid_stats"):
+            if key in row and isinstance(row[key], str):
+                row[key] = json.loads(row[key])
+        return _serialize_row(row)
+    return None
+
+
 # ──────────────────────────────────────────────
 # Simulates
 # ──────────────────────────────────────────────
@@ -156,13 +230,13 @@ async def add_simulate(record: dict, user_id: Optional[str] = None) -> dict:
         record["user_id"] = user_id
     db = await get_database()
     await db.execute(
-        """INSERT INTO simulates (task_id, name, status, current_step, params, step_results, file_ids, files, file_names, user_id, created_at)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT (task_id) DO NOTHING""",
+        """INSERT INTO simulates (task_id, name, status, current_step, params, step_results, file_ids, files, file_names, source_hash, user_id, created_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) ON CONFLICT (task_id) DO NOTHING""",
         record["task_id"], record.get("name"), record.get("status", "pending"),
         record.get("current_step", 0), json.dumps(record.get("params", {})),
         json.dumps(record.get("step_results", {})), json.dumps(record.get("file_ids", [])),
         json.dumps(record.get("files", [])), json.dumps(record.get("file_names", [])),
-        record.get("user_id"), _to_dt(record.get("created_at", _now())),
+        record.get("source_hash"), record.get("user_id"), _to_dt(record.get("created_at", _now())),
     )
     return record
 
@@ -249,12 +323,12 @@ async def add_opening(record: dict, user_id: Optional[str] = None) -> dict:
         record["user_id"] = user_id
     db = await get_database()
     await db.execute(
-        """INSERT INTO openings (id, name, file_id, file_name, meta, bidder_count, bid_ranking, bid_stats, ai_analysis, status, user_id, created_at)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) ON CONFLICT (id) DO NOTHING""",
+        """INSERT INTO openings (id, name, file_id, file_name, meta, bidder_count, bid_ranking, bid_stats, ai_analysis, status, source_hash, user_id, created_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) ON CONFLICT (id) DO NOTHING""",
         record["id"], record.get("name"), record.get("file_id"), record.get("file_name"),
         json.dumps(record.get("meta", {})), record.get("bidder_count", 0),
         json.dumps(record.get("bid_ranking", [])), json.dumps(record.get("bid_stats", {})),
-        record.get("ai_analysis"), record.get("status", "completed"),
+        record.get("ai_analysis"), record.get("status", "completed"), record.get("source_hash"),
         record.get("user_id"), _to_dt(record.get("created_at", _now())),
     )
     return record
@@ -336,11 +410,11 @@ async def add_extract(record: dict, user_id: Optional[str] = None) -> dict:
         record["user_id"] = user_id
     db = await get_database()
     await db.execute(
-        """INSERT INTO extracts (id, name, file_id, file_name, template_type, mode, content, elements, status, user_id, created_at)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT (id) DO NOTHING""",
+        """INSERT INTO extracts (id, name, file_id, file_name, template_type, mode, content, elements, status, source_hash, user_id, created_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) ON CONFLICT (id) DO NOTHING""",
         record["id"], record.get("name"), record.get("file_id"), record.get("file_name"),
         record.get("template_type"), record.get("mode"), record.get("content"),
-        json.dumps(record.get("elements", [])), record.get("status", "completed"),
+        json.dumps(record.get("elements", [])), record.get("status", "completed"), record.get("source_hash"),
         record.get("user_id"), _to_dt(record.get("created_at", _now())),
     )
     return record
@@ -534,3 +608,38 @@ async def delete_reset_token(token: str) -> None:
     db = await get_database()
     await db.execute("DELETE FROM reset_tokens WHERE token = $1", token)
 
+
+async def _mock_get_file_content(file_id: str) -> Optional[bytes]:
+    return None
+
+
+def _dispatch(name: str, original, transform=None):
+    async def wrapper(*args, **kwargs):
+        if use_mock_storage():
+            if transform:
+                args, kwargs = transform(args, kwargs)
+            return getattr(mock_storage, name)(*args, **kwargs)
+        return await original(*args, **kwargs)
+    return wrapper
+
+
+def _drop_encrypted_content(args, kwargs):
+    kwargs.pop("encrypted_content", None)
+    return args, kwargs
+
+
+for _name in (
+    "get_stats", "list_files", "get_file", "delete_file", "update_file",
+    "list_simulates", "get_simulate", "delete_simulate", "update_simulate",
+    "list_openings", "get_opening", "delete_opening", "update_opening",
+    "list_extracts", "get_extract", "delete_extract",
+    "add_simulate", "add_opening", "add_extract",
+    "add_user", "get_user_by_username", "get_user_by_email", "get_user_by_id",
+    "update_user_password", "save_api_key", "get_api_key", "delete_api_key",
+    "list_user_api_keys", "save_verification_code", "verify_code",
+    "delete_verification_code", "save_reset_token", "get_reset_token",
+    "delete_reset_token",
+):
+    globals()[_name] = _dispatch(_name, globals()[_name])
+
+add_file = _dispatch("add_file", add_file, _drop_encrypted_content)

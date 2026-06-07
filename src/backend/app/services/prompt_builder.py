@@ -101,12 +101,19 @@ class PromptBuilder:
         element_names_json = [ELEMENT_NAMES[k] for k in all_elements if k in ELEMENT_NAMES]
         json_format = (
             f"\n\n# JSON 输出格式\n\n"
-            f'请以 JSON 格式输出，包含 "elements" 数组，每个元素有 "name" 和 "content" 字段：\n'
+            f'请只输出 JSON，不要输出 Markdown 代码块、解释文字或额外前后缀。必须包含 "elements" 数组，每个元素有 "name" 和 "content" 字段：\n'
             f'{{"elements": [\n'
             + ",\n".join(f'  {{"name": "{n}", "content": "..."}}' for n in element_names_json)
             + "\n]}}\n\n"
             f"content 字段使用 Markdown 格式（可含表格），内容参考上方模板的结构，信息完整详实。"
         )
+        if template_type == "batch":
+            json_format += (
+                "\n\n# 批量对比结构化要求\n\n"
+                f"必须按要素拆分输出 {len(element_names_json)} 个独立对象，name 必须分别为：{'、'.join(element_names_json)}。"
+                "每个 content 内部再横向对比多份文件；禁止把所有内容合并到一个 '分析结果'、'批量对比' 或任意单一要素中。"
+                "如果某个要素在部分文件中未明确，也必须保留该要素对象，并在对应文件列中写“未明确”。"
+            )
 
         return f"""{role}
 

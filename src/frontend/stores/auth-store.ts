@@ -10,6 +10,14 @@ import { useFileStore } from "@/stores/file-store";
 import { useTaskStore } from "@/stores/task-store";
 import { useLogStore } from "@/stores/log-store";
 
+const AUTH_DISABLED = process.env.NEXT_PUBLIC_AUTH_DISABLED === "true";
+const DEMO_USER: User = {
+  id: "demo-user",
+  username: "demo",
+  email: "demo@example.com",
+  role: "user",
+};
+
 interface User {
   id: string;
   username: string;
@@ -31,11 +39,11 @@ interface AuthState {
 }
 
 export const useAuthStore = create<AuthState>((set, get) => ({
-  user: null,
+  user: AUTH_DISABLED ? DEMO_USER : null,
   accessToken: null,
-  isAuthenticated: false,
+  isAuthenticated: AUTH_DISABLED,
   isLoading: false,
-  authReady: false,
+  authReady: AUTH_DISABLED,
 
   login: async (email, password) => {
     set({ isLoading: true });
@@ -84,6 +92,10 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
 
   logout: () => {
+    if (AUTH_DISABLED) {
+      set({ accessToken: null, user: DEMO_USER, isAuthenticated: true, authReady: true });
+      return;
+    }
     // 先清除客户端可见状态，确保 middleware 不再认为已认证
     clearAuthCookie();
     set({ accessToken: null, user: null, isAuthenticated: false, authReady: true });
@@ -98,6 +110,10 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
 
   refreshAccessToken: async () => {
+    if (AUTH_DISABLED) {
+      set({ accessToken: null, user: DEMO_USER, isAuthenticated: true, authReady: true });
+      return null;
+    }
     try {
       const res = await authRefresh();
       set({ accessToken: res.access_token, isAuthenticated: true });
@@ -113,6 +129,10 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
 
   initAuth: async () => {
+    if (AUTH_DISABLED) {
+      set({ accessToken: null, user: DEMO_USER, isAuthenticated: true, authReady: true });
+      return;
+    }
     const { accessToken, refreshAccessToken } = get();
     if (accessToken) {
       try {

@@ -28,8 +28,16 @@ END $$;
 DO $$
 BEGIN
     IF EXISTS (
-        SELECT 1 FROM information_schema.columns
-        WHERE table_name = 'files' AND column_name = 'file_type'
+        SELECT 1 FROM information_schema.tables
+        WHERE table_name = 'files'
+    ) AND (
+        EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_name = 'files' AND column_name = 'file_type'
+        ) OR NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_name = 'files' AND column_name = 'user_id'
+        )
     ) THEN
         DROP TABLE IF EXISTS extracts CASCADE;
         DROP TABLE IF EXISTS openings CASCADE;
@@ -112,6 +120,35 @@ BEGIN
     END IF;
 END $$;
 
+-- 迁移 8：添加源文件指纹，用于安全复用历史分析结果
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'files' AND column_name = 'file_hash'
+    ) THEN
+        ALTER TABLE files ADD COLUMN file_hash VARCHAR(64);
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'extracts' AND column_name = 'source_hash'
+    ) THEN
+        ALTER TABLE extracts ADD COLUMN source_hash TEXT;
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'openings' AND column_name = 'source_hash'
+    ) THEN
+        ALTER TABLE openings ADD COLUMN source_hash TEXT;
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'simulates' AND column_name = 'source_hash'
+    ) THEN
+        ALTER TABLE simulates ADD COLUMN source_hash TEXT;
+    END IF;
+END $$;
+
 CREATE TABLE IF NOT EXISTS files (
     id VARCHAR(64) PRIMARY KEY,
     original_name TEXT NOT NULL,
@@ -120,6 +157,7 @@ CREATE TABLE IF NOT EXISTS files (
     type VARCHAR(50),
     user_id VARCHAR(64) REFERENCES users(id) ON DELETE CASCADE,
     encrypted_content BYTEA,
+    file_hash VARCHAR(64),
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -127,6 +165,7 @@ CREATE TABLE IF NOT EXISTS simulates (
     task_id VARCHAR(64) PRIMARY KEY,
     name TEXT,
     status VARCHAR(30) DEFAULT 'pending',
+    source_hash TEXT,
     current_step INT DEFAULT 0,
     params JSONB DEFAULT '{}',
     step_results JSONB DEFAULT '{}',
@@ -148,6 +187,7 @@ CREATE TABLE IF NOT EXISTS openings (
     bid_stats JSONB DEFAULT '{}',
     ai_analysis TEXT,
     status VARCHAR(20) DEFAULT 'completed',
+    source_hash TEXT,
     user_id VARCHAR(64) REFERENCES users(id) ON DELETE CASCADE,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -162,6 +202,7 @@ CREATE TABLE IF NOT EXISTS extracts (
     content TEXT,
     elements JSONB DEFAULT '[]',
     status VARCHAR(30) DEFAULT 'completed',
+    source_hash TEXT,
     user_id VARCHAR(64) REFERENCES users(id) ON DELETE CASCADE,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );

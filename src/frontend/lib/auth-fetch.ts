@@ -9,6 +9,7 @@ import { useAuthStore } from "@/stores/auth-store";
 import { useLogStore } from "@/stores/log-store";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
+const AUTH_DISABLED = process.env.NEXT_PUBLIC_AUTH_DISABLED === "true";
 
 let refreshPromise: Promise<string | null> | null = null;
 
@@ -29,13 +30,13 @@ function waitForAuthReady(): Promise<void> {
 export async function authFetch(url: string, options?: RequestInit): Promise<Response> {
   // 若 token 尚未就绪，等待 initAuth 完成
   const { accessToken: initialToken } = useAuthStore.getState();
-  if (!initialToken) {
+  if (!AUTH_DISABLED && !initialToken) {
     await waitForAuthReady();
   }
 
   const { accessToken } = useAuthStore.getState();
   const headers = new Headers(options?.headers);
-  if (accessToken) {
+  if (!AUTH_DISABLED && accessToken) {
     headers.set("Authorization", `Bearer ${accessToken}`);
   }
 
@@ -66,7 +67,7 @@ export async function authFetch(url: string, options?: RequestInit): Promise<Res
     });
   }
 
-  if (response.status === 401) {
+  if (!AUTH_DISABLED && response.status === 401) {
     if (!refreshPromise) {
       refreshPromise = useAuthStore.getState().refreshAccessToken().finally(() => {
         refreshPromise = null;
@@ -101,13 +102,13 @@ export async function authFetch(url: string, options?: RequestInit): Promise<Res
 export async function authFetchSSE(url: string, options?: RequestInit): Promise<Response> {
   // 若 token 尚未就绪，等待 initAuth 完成
   const { accessToken: initialToken } = useAuthStore.getState();
-  if (!initialToken) {
+  if (!AUTH_DISABLED && !initialToken) {
     await waitForAuthReady();
   }
 
   const { accessToken } = useAuthStore.getState();
   const headers = new Headers(options?.headers);
-  if (accessToken) {
+  if (!AUTH_DISABLED && accessToken) {
     headers.set("Authorization", `Bearer ${accessToken}`);
   }
 
@@ -138,7 +139,7 @@ export async function authFetchSSE(url: string, options?: RequestInit): Promise<
     });
   }
 
-  if (response.status === 401) {
+  if (!AUTH_DISABLED && response.status === 401) {
     if (!refreshPromise) {
       refreshPromise = useAuthStore.getState().refreshAccessToken().finally(() => {
         refreshPromise = null;
