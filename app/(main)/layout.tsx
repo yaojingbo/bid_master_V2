@@ -49,9 +49,9 @@ export default function MainLayout({
   }
 
   return (
-    <div className="flex min-h-screen bg-background">
+    <div className="min-h-screen bg-background">
       <Sidebar />
-      <main className="flex-1 overflow-auto">
+      <main>
         <div className="mx-auto px-8 py-16">
           {children}
         </div>

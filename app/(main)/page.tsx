@@ -2,159 +2,140 @@
 
 import Link from 'next/link';
 import {
-  FileSearch,
-  BarChart3,
-  FileText,
   ArrowRight,
-  Brain,
-  Shield,
-  Zap,
-  LogIn,
-  UserPlus,
-  ArrowUpRight,
+  BarChart3,
+  Database,
+  FileSearch,
+  FileText,
+  Settings,
+  Sparkles,
 } from 'lucide-react';
-import { useAuthStore } from '@/stores/auth-store';
 
 const features = [
   {
     href: '/extract',
     icon: FileSearch,
+    number: '1',
     title: '要素提取',
-    desc: '上传招标文件，AI 自动提取资质要求、评标办法、业绩门槛、定标方法、合同条款等八大关键要素',
+    desc: '上传招标文件，AI 快速提取资质要求、评分办法、合同条款等关键内容',
+    tags: ['PDF', 'Word', 'Excel', '要素提取', '结果导出'],
   },
   {
     href: '/simulate',
     icon: FileText,
+    number: '2',
     title: '模拟编制',
-    desc: '基于历史项目规律和区域特征，四步引导式生成模拟招标文件，支持多维度对比',
+    desc: '基于项目特征生成模拟招标文件，辅助编制、复核和多维对比',
+    tags: ['四步引导', '模板生成', '多维对比', '文件导出'],
   },
   {
     href: '/statistics',
     icon: BarChart3,
+    number: '3',
     title: '开标分析',
-    desc: '智能解析开标一览表，自动计算报价排名、降价幅度、离散系数，生成分析报告',
-  },
-];
-
-const insightCards = [
-  {
-    href: '/settings',
-    label: 'AI 模型',
-    value: 'AI大模型+',
-    desc: '统一配置模型供应商与能力偏好',
-    icon: Brain,
-    className: 'md:col-span-2 bg-card',
+    desc: '解析开标一览表，输出报价排名、降价幅度、离散系数和分析报告',
+    tags: ['报价排名', '偏差分析', '报告生成', 'Excel解析'],
   },
   {
-    href: '/extract',
-    label: '文件格式',
-    value: '6 种',
-    desc: '覆盖 PDF、Word、Excel 等主流招投标文件',
-    icon: Shield,
-    className: 'bg-card',
-  },
-  {
-    href: '/statistics',
-    label: '平均响应',
-    value: '~10s',
-    desc: '快速解析开标报价并输出可读分析',
-    icon: Zap,
-    className: 'bg-card',
+    href: '/workbench',
+    icon: Settings,
+    number: '4',
+    title: '系统工具',
+    desc: '统一管理 AI 模型、数据资产和系统日志，让招投标工作流更完整',
+    tags: ['AI设置', '数据管理', '系统日志', '模型配置'],
   },
 ];
 
 export default function HomePage() {
-  const { isAuthenticated } = useAuthStore();
-
   return (
-    <div className="max-w-5xl mx-auto space-y-16">
-      <div className="pt-8">
-        <h1 className="text-3xl font-bold text-foreground tracking-tight leading-tight">
-          招投标智能分析工具箱
+    <div className="mx-auto max-w-7xl pb-8">
+      <section className="flex min-h-[470px] flex-col items-center justify-center text-center">
+        <div className="inline-flex items-center gap-2 rounded-full border border-primary/25 bg-primary/5 px-4 py-2 text-sm font-semibold text-primary">
+          <span className="h-2 w-2 rounded-full bg-primary" />
+          你的招投标 AI 工作台
+        </div>
+
+        <h1 className="mt-8 text-[64px] font-extrabold leading-none tracking-tight text-foreground">
+          <span className="text-primary">Bid</span> Master
         </h1>
-        <p className="text-muted-foreground text-base mt-4 max-w-lg leading-relaxed">
-          上传招标文件，AI 自动提取关键要素、模拟编制投标文件、分析开标数据
+
+        <p className="mt-8 text-[26px] font-semibold leading-tight tracking-tight text-foreground">
+          <span className="text-primary">更快</span>地提取 · <span className="text-primary">更稳</span>地编制 ·{' '}
+          <span className="text-primary">更清晰</span>地分析 · <span className="text-primary">更强</span>的工具
         </p>
-        <div className="flex items-center gap-4 mt-8">
+
+        <p className="mt-5 text-lg text-muted-foreground">AI 时代的招投标工作流，一站备齐</p>
+
+        <div className="mt-10 flex items-center justify-center gap-4">
           <Link
-            href="/extract"
-            className="inline-flex items-center gap-2 h-11 px-6 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90 transition-colors"
+            href="/workbench"
+            className="inline-flex h-12 items-center gap-3 rounded-xl bg-primary px-7 text-base font-semibold text-primary-foreground shadow-sm transition-colors hover:bg-primary/90"
           >
-            开始使用
-            <ArrowRight className="h-4 w-4" />
+            进入工作台
+            <ArrowRight className="h-5 w-5" />
           </Link>
           <Link
             href="/statistics"
-            className="inline-flex items-center text-sm text-primary hover:underline transition-colors"
+            className="inline-flex h-12 items-center rounded-xl border border-border bg-card px-7 text-base font-semibold text-foreground shadow-sm transition-colors hover:bg-muted"
           >
-            了解更多
+            查看功能演示
           </Link>
         </div>
+      </section>
 
-        {!isAuthenticated && (
-          <div className="flex items-center gap-3 mt-6">
-            <Link
-              href="/register"
-              className="inline-flex items-center gap-2 h-10 px-5 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90 transition-colors"
-            >
-              <UserPlus className="h-4 w-4" />
-              注册新账号
-            </Link>
-            <Link
-              href="/login"
-              className="inline-flex items-center gap-2 h-10 px-5 border border-border rounded-lg text-sm text-foreground hover:bg-muted transition-colors"
-            >
-              <LogIn className="h-4 w-4" />
-              登录
-            </Link>
-          </div>
-        )}
-      </div>
+      <section className="pt-2">
+        <div className="mb-12 text-center">
+          <h2 className="text-4xl font-bold tracking-tight text-foreground">核心功能</h2>
+          <p className="mt-4 text-base text-muted-foreground">
+            提取关键要素 · 模拟编制文件 · 分析开标报价 · 管理知识数据
+          </p>
+        </div>
 
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
-        {insightCards.map(card => (
-          <Link
-            key={card.label}
-            href={card.href}
-            className={`group rounded-2xl border border-border p-6 shadow-sm transition-all hover:-translate-y-0.5 hover:border-primary/25 hover:shadow-md ${card.className}`}
-          >
-            <div className="flex min-h-32 flex-col justify-between gap-5">
-              <div className="flex items-start justify-between gap-4">
-                <div className="h-12 w-12 rounded-xl bg-primary/10 flex items-center justify-center shrink-0 transition-colors group-hover:bg-primary/15">
-                  <card.icon className="h-6 w-6 text-primary" />
+        <div className="grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-4">
+          {features.map(feature => (
+            <Link
+              key={feature.href}
+              href={feature.href}
+              className="group flex min-h-[320px] flex-col rounded-2xl border border-border bg-card p-8 shadow-sm transition-all hover:-translate-y-0.5 hover:border-primary/25 hover:shadow-md"
+            >
+              <div className="mb-8 flex items-start justify-between">
+                <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/10 text-primary transition-colors group-hover:bg-primary/15">
+                  <feature.icon className="h-7 w-7" />
                 </div>
-                <ArrowUpRight className="h-4 w-4 text-muted-foreground transition-colors group-hover:text-primary" />
+                <span className="flex h-7 w-7 items-center justify-center rounded-full border-2 border-primary/20 text-sm font-bold text-primary/40">
+                  {feature.number}
+                </span>
               </div>
-              <div>
-                <p className="text-2xl font-bold text-foreground tracking-tight">{card.value}</p>
-                <p className="text-sm font-medium text-foreground mt-1">{card.label}</p>
-                <p className="text-xs text-muted-foreground mt-2 leading-relaxed">{card.desc}</p>
-              </div>
-            </div>
-          </Link>
-        ))}
-      </div>
 
-      <div>
-        <h2 className="text-lg font-semibold text-foreground mb-6">核心功能</h2>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          {features.map(f => (
-            <Link
-              key={f.href}
-              href={f.href}
-              className="group block p-8 bg-card rounded-xl border border-border hover:border-primary/20 hover:shadow-md transition-all"
-            >
-              <div className="h-12 w-12 rounded-lg bg-primary/8 flex items-center justify-center mb-5">
-                <f.icon className="h-6 w-6 text-primary" />
-              </div>
-              <h3 className="font-semibold text-foreground mb-3 group-hover:text-primary transition-colors">
-                {f.title}
+              <h3 className="text-[22px] font-bold tracking-tight text-foreground transition-colors group-hover:text-primary">
+                {feature.title}
               </h3>
-              <p className="text-sm text-muted-foreground leading-relaxed">{f.desc}</p>
+              <p className="mt-4 text-[15px] leading-7 text-muted-foreground">{feature.desc}</p>
+
+              <div className="mt-auto flex flex-wrap gap-2 pt-7">
+                {feature.tags.map(tag => (
+                  <span
+                    key={tag}
+                    className="rounded-full bg-primary/8 px-3 py-1 text-xs font-medium text-primary"
+                  >
+                    {tag}
+                  </span>
+                ))}
+              </div>
             </Link>
           ))}
         </div>
-      </div>
+
+        <div className="mt-10 text-center">
+          <Link
+            href="/workbench"
+            className="inline-flex items-center gap-2 text-sm font-semibold text-primary transition-colors hover:text-primary/80"
+          >
+            了解全部功能细节
+            <ArrowRight className="h-4 w-4" />
+          </Link>
+        </div>
+      </section>
     </div>
   );
 }
