@@ -11,6 +11,7 @@ from typing import Optional, AsyncGenerator, Dict, Any
 from dataclasses import dataclass, field
 
 from app.infrastructure.pg_storage import add_simulate, update_simulate, get_file, calculate_content_hash, find_completed_extract
+from app.services.extract_service import _format_extract_result
 
 
 def _fallback_simulate_result(step: int, source: str, params: dict | None = None) -> str:
@@ -83,7 +84,7 @@ class SimulateService:
         source_hashes = []
         for file_id in file_ids:
             try:
-                source_hashes.append(calculate_content_hash(await file_service.download(file_id)))
+                source_hashes.append(calculate_content_hash(await file_service.download(file_id, user_id)))
             except Exception:
                 source_hashes.append(file_id)
         source_hash = ",".join(sorted(source_hashes))
@@ -159,7 +160,7 @@ class SimulateService:
 
         for file_id in task.file_ids:
             try:
-                content = await file_service.download(file_id)
+                content = await file_service.download(file_id, user_id)
                 text, _ = extract_text_from_content(content)
 
                 converted.append({
@@ -201,11 +202,7 @@ class SimulateService:
 
         cached = await find_completed_extract(task.source_hash, "standard", "single", None, user_id) if user_id else None
         if cached:
-            task.step2_result = cached.get("content") or "\n\n".join(
-                f"## {element.get('name', '要素')}\n{element.get('content', '')}"
-                for element in cached.get("elements", [])
-                if isinstance(element, dict)
-            )
+            task.step2_result = _format_extract_result(cached)
             task.current_step = 2
             task.status = "step3_compare"
             await update_simulate(task_id, {
@@ -221,7 +218,7 @@ class SimulateService:
         combined_text = ""
         for file_id in task.file_ids:
             try:
-                content = await file_service.download(file_id)
+                content = await file_service.download(file_id, user_id)
                 text, _ = extract_text_from_content(content)
                 combined_text += f"\n## 文件: {file_id}\n{text[:30000]}\n---\n"
             except Exception:

@@ -12,6 +12,17 @@ from app.services.llm_service import LLMService
 from app.services.file_service import FileService
 from app.infrastructure.pg_storage import add_extract, get_file, calculate_content_hash, find_completed_extract
 
+
+def _format_extract_result(record: dict) -> str:
+    elements = record.get("elements") or []
+    if elements:
+        return "\n\n".join(
+            f"## {element.get('name', '要素')}\n{element.get('content', '')}"
+            for element in elements
+            if isinstance(element, dict)
+        )
+    return str(record.get("content") or "")
+
 logger = logging.getLogger(__name__)
 
 
@@ -130,23 +141,29 @@ def _parse_markdown_elements_response(response: str) -> list[dict[str, str]]:
     if not text:
         return []
 
-    element_names = [
-        "项目基本信息",
-        "资质要求",
-        "业绩要求",
-        "人员要求",
-        "评标办法",
-        "分值分配与评分细则",
-        "定标方法",
-        "合同条款",
-    ]
-    name_pattern = "|".join(re.escape(name) for name in element_names)
+    element_aliases = {
+        "项目基本信息": ["项目基本信息", "基本信息", "项目概况"],
+        "资质要求": ["资质要求", "资格要求", "资格条件", "资质门槛"],
+        "业绩要求": ["业绩要求", "业绩门槛", "类似业绩", "企业业绩"],
+        "人员要求": ["人员要求", "人员门槛", "项目负责人", "人员资格"],
+        "评标办法": ["评标办法", "评审办法", "评分办法"],
+        "分值分配与评分细则": ["分值分配与评分细则", "评分细则", "分值分配", "评分标准"],
+        "定标方法": ["定标方法", "定标规则", "中标候选人确定"],
+        "合同条款": ["合同条款", "合同主要条款", "付款方式", "工期要求"],
+        "门槛要求": ["门槛要求", "投标门槛", "否决项", "资格门槛"],
+    }
+    alias_to_name = {
+        alias: name
+        for name, aliases in element_aliases.items()
+        for alias in aliases
+    }
+    alias_pattern = "|".join(re.escape(alias) for alias in sorted(alias_to_name, key=len, reverse=True))
     heading_patterns = [
-        re.compile(rf"^\s*(?:#{{1,6}}\s*)?\*\*({name_pattern})\*\*\s*[:：]?\s*(.*)$"),
-        re.compile(rf"^\s*(?:#{{1,6}}\s*)?(?:\d+[.、]\s*)?({name_pattern})\s*[:：]?\s*(.*)$"),
+        re.compile(rf"^\s*(?:#{{1,6}}\s*)?(?:[-*]\s*)?(?:要素\s*)?[一二三四五六七八九十\d]+[.、：:]\s*(?:\*\*)?({alias_pattern})(?:\*\*)?\s*[:：]?\s*(.*)$"),
+        re.compile(rf"^\s*(?:#{{1,6}}\s*)?(?:[-*]\s*)?(?:\*\*)?({alias_pattern})(?:\*\*)?\s*[:：]?\s*(.*)$"),
     ]
 
-    grouped: dict[str, list[str]] = {name: [] for name in element_names}
+    grouped: dict[str, list[str]] = {name: [] for name in element_aliases}
     current_name: str | None = None
     current_lines: list[str] = []
 
@@ -163,7 +180,7 @@ def _parse_markdown_elements_response(response: str) -> list[dict[str, str]]:
         for pattern in heading_patterns:
             match = pattern.match(line)
             if match:
-                matched_name = match.group(1)
+                matched_name = alias_to_name[match.group(1)]
                 trailing_content = match.group(2).strip() if len(match.groups()) > 1 else ""
                 break
 
@@ -351,17 +368,18 @@ class ExtractService:
         try:
             yield {"type": "progress", "message": "正在读取文档...", "phase": "reading", "percentage": 5}
 
-            content = await self.file_service.download(document_id)
+            content = await self.file_service.download(document_id, user_id)
             source_hash = calculate_content_hash(content)
             cached = await find_completed_extract(source_hash, template_type, mode, elements, user_id) if user_id else None
             if cached:
                 yield {"type": "progress", "message": "已复用同一原始文件的历史要素提取结果", "phase": "extracting", "percentage": 90}
                 cached_elements = cached.get("elements") or []
+                cached_text = _format_extract_result(cached)
                 if cached_elements:
                     for element in cached_elements:
                         yield {"type": "element", "data": element, "phase": "extracting", "percentage": 90}
-                elif cached.get("content"):
-                    yield {"type": "element", "data": {"name": "分析结果", "content": cached["content"]}, "phase": "extracting", "percentage": 90}
+                elif cached_text:
+                    yield {"type": "element", "data": {"name": "分析结果", "content": cached_text}, "phase": "extracting", "percentage": 90}
                 yield {"type": "done", "data": {"summary": "已复用历史提取结果"}, "phase": "extracting", "percentage": 100}
                 return
 
@@ -442,7 +460,7 @@ class ExtractService:
         result_holder = {"text": "", "done": False, "error": None}
         _saved = False
 
-        file_record = await get_file(file_id)
+        file_record = await get_file(file_id, user_id)
         file_name = file_record.get("original_name", "") if file_record else ""
         effective_source_hash = source_hash or (file_record.get("file_hash") if file_record else None)
         effective_mode = result_mode or provider
@@ -514,13 +532,14 @@ class ExtractService:
                         }
                     except json.JSONDecodeError:
                         found_elements = _parse_markdown_elements_response(full_response)
-                        status = "completed_markdown" if found_elements else "completed_json_error"
+                        content = json.dumps({"elements": found_elements}, ensure_ascii=False) if found_elements else full_response
+                        status = "completed" if found_elements else "completed_json_error"
                         await add_extract({
                             "file_id": file_id,
                             "file_name": file_name,
                             "template_type": template_type,
                             "mode": effective_mode,
-                            "content": full_response,
+                            "content": content,
                             "elements": found_elements,
                             "status": status,
                             "source_hash": effective_source_hash,
@@ -598,7 +617,7 @@ class ExtractService:
             # 并行下载 + 解析所有文件
             async def fetch_and_parse(fid: str) -> tuple[str, str]:
                 try:
-                    content = await self.file_service.download(fid)
+                    content = await self.file_service.download(fid, user_id)
                     text, _ = extract_text_from_content(content)
                     return fid, text
                 except Exception as e:
@@ -662,10 +681,17 @@ class ExtractService:
         try:
             yield {"type": "progress", "message": "正在读取招标文件...", "phase": "reading", "percentage": 5}
 
-            content = await self.file_service.download(file_id)
-            text_content, needs_ocr = extract_text_from_content(content)
+            content = await self.file_service.download(file_id, user_id)
+            source_hash = calculate_content_hash(content)
+            cached = await find_completed_extract(source_hash, "standard", "single", None, user_id) if user_id else None
+            if cached:
+                cached_text = _format_extract_result(cached)
+                yield {"type": "progress", "message": "已复用历史要素提取结果，正在比对门槛要求...", "phase": "parsing", "percentage": 25}
+                text_content = cached_text
+                needs_ocr = False
+            else:
+                text_content, needs_ocr = extract_text_from_content(content)
 
-            # 图片型 PDF：触发 OCR 识别
             if needs_ocr:
                 logger.info("门槛分析触发 OCR: file_id=%s, provider=%s", file_id, provider)
                 yield {"type": "progress", "message": "检测到图片型 PDF，正在启动 OCR 识别...", "phase": "parsing", "percentage": 12}

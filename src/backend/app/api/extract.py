@@ -122,7 +122,7 @@ async def extract_threshold(request: Request, current_user: dict = Depends(get_c
     body = await request.json()
     req = ThresholdRequest(**body)
     if not req.userQualifications.strip():
-        raise HTTPException(status_code=400, detail="请填写自身资质条件")
+        raise HTTPException(status_code=400, detail="请填写自身资质、业绩条件")
     return EventSourceResponse(
         extract_threshold_generator(
             req.fileId,

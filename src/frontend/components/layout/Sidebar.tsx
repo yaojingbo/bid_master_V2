@@ -3,7 +3,6 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
-  BarChart3,
   FileSearch,
   LayoutDashboard,
   LogOut,
@@ -12,6 +11,7 @@ import {
   User,
   ScrollText,
   Settings,
+  Terminal,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuthStore } from '@/stores/auth-store';
@@ -19,7 +19,7 @@ import { useAuthStore } from '@/stores/auth-store';
 const navItems = [
   { href: '/', label: '首页', icon: LayoutDashboard },
   { href: '/workbench', label: '功能', icon: FileSearch },
-  { href: '/statistics', label: '开标分析', icon: BarChart3 },
+  { href: '/cli', label: 'CLI', icon: Terminal },
   { href: '/settings', label: 'AI 设置', icon: Settings },
 ];
 

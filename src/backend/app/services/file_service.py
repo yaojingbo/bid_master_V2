@@ -71,7 +71,7 @@ class FileService:
             "status": "ready",
         }
 
-    async def download(self, file_id: str) -> bytes:
+    async def download(self, file_id: str, user_id: str = None) -> bytes:
         """
         Download and decrypt a file.
 
@@ -81,7 +81,7 @@ class FileService:
         Returns:
             Decrypted file content
         """
-        return await self.storage.read(file_id)
+        return await self.storage.read(file_id, user_id)
 
     async def delete(self, file_id: str) -> bool:
         """

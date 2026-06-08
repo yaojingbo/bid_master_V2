@@ -15,9 +15,11 @@ import {
   Sparkles,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { WorkbenchLayout } from '@/components/layout/WorkbenchLayout';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { TabNavigation } from '@/components/ui/TabNavigation';
 import { TaskProgress } from '@/components/ui/TaskProgress';
+import { MarkdownPreview } from '@/components/ui/MarkdownPreview';
 import { useFileUpload } from '@/hooks/useFileUpload';
 import { useFileStore } from '@/stores/file-store';
 import { useSettingsStore } from '@/stores/settings-store';
@@ -99,6 +101,7 @@ export default function ExtractPage() {
   const [extractedElements, setExtractedElements] = useState<ExtractedElement[]>([]);
   const [streamRawText, setStreamRawText] = useState('');
   const [isDone, setIsDone] = useState(false);
+  const [showMarkdownPreview, setShowMarkdownPreview] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [percentage, setPercentage] = useState<number | null>(null);
 
@@ -299,6 +302,11 @@ export default function ExtractPage() {
     document.body.removeChild(a);
   }, [streamRawText]);
 
+  const renderPreviewText = useCallback(
+    (text: string) => (showMarkdownPreview ? <MarkdownPreview content={text} /> : text),
+    [showMarkdownPreview]
+  );
+
   const tabs = [
     { key: 'single', label: '单文件提取', icon: FileSearch },
     { key: 'batch', label: '批量对比', icon: BarChart3 },
@@ -306,431 +314,460 @@ export default function ExtractPage() {
   ];
 
   return (
-    <div className="w-full space-y-6">
-      <PageHeader title="要素提取" description="上传招标文件，AI 按用户要求自动提取关键要素" />
+    <WorkbenchLayout>
+      <div className="w-full space-y-6">
+        <PageHeader title="要素提取" description="上传招标文件，AI 按用户要求自动提取关键要素" />
 
-      <div className="grid grid-cols-1 gap-8 xl:grid-cols-[minmax(900px,1000px)_minmax(0,1fr)] xl:items-start">
-        <div className="space-y-5">
-          {/* Tab 导航 */}
-          <TabNavigation tabs={tabs} activeTab={activeTab} onTabChange={setActiveTab} />
+        <div className="grid grid-cols-1 gap-8 xl:grid-cols-[minmax(420px,500px)_minmax(0,1fr)] xl:items-start">
+          <div className="space-y-5">
+            {/* Tab 导航 */}
+            <TabNavigation tabs={tabs} activeTab={activeTab} onTabChange={setActiveTab} />
 
-          {/* 上传区域 */}
-          <input
-            type="file"
-            id="extract-file-input"
-            ref={fileInputRef}
-            data-testid="file-input"
-            className="file-sr-only"
-            accept=".pdf,.md,.doc,.docx,.xlsx,.xls"
-            onChange={handleUpload}
-          />
-          <label
-            htmlFor="extract-file-input"
-            tabIndex={0}
-            className={cn(
-              'border-2 border-dashed rounded-xl p-8 text-center transition-colors cursor-pointer flex flex-col items-center gap-4 bg-card',
-              isDragging ? 'border-primary bg-primary/5' : 'hover:border-primary/50'
-            )}
-            onKeyDown={e => {
-              if (e.key === 'Enter' || e.key === ' ') fileInputRef.current?.click();
-            }}
-            onDragOver={handleDragOver}
-            onDragLeave={handleDragLeave}
-            onDrop={handleDrop}
-          >
-            <div className="h-12 w-12 rounded-full bg-primary/10 p-3">
-              <Upload className="h-6 w-6 text-primary" />
-            </div>
-            <div>
-              <p className="text-lg font-medium">点击或拖拽文件到此区域</p>
-              <p className="text-sm text-muted-foreground">
-                支持 PDF、Markdown、Word、Excel（最大 50MB）
-              </p>
-            </div>
-          </label>
-          {activeTab === 'single' && displayFiles.length > 0 && (
-            <div className="space-y-4">
-              {/* 左：文件列表 */}
+            {/* 上传区域 */}
+            <input
+              type="file"
+              id="extract-file-input"
+              ref={fileInputRef}
+              data-testid="file-input"
+              className="file-sr-only"
+              accept=".pdf,.md,.doc,.docx,.xlsx,.xls"
+              onChange={handleUpload}
+            />
+            <label
+              htmlFor="extract-file-input"
+              tabIndex={0}
+              className={cn(
+                'border-2 border-dashed rounded-xl p-8 text-center transition-colors cursor-pointer flex flex-col items-center gap-4 bg-card',
+                isDragging ? 'border-primary bg-primary/5' : 'hover:border-primary/50'
+              )}
+              onKeyDown={e => {
+                if (e.key === 'Enter' || e.key === ' ') fileInputRef.current?.click();
+              }}
+              onDragOver={handleDragOver}
+              onDragLeave={handleDragLeave}
+              onDrop={handleDrop}
+            >
+              <div className="h-12 w-12 rounded-full bg-primary/10 p-3">
+                <Upload className="h-6 w-6 text-primary" />
+              </div>
               <div>
+                <p className="text-lg font-medium">点击或拖拽文件到此区域</p>
+                <p className="text-sm text-muted-foreground">
+                  支持 PDF、Markdown、Word、Excel（最大 50MB）
+                </p>
+              </div>
+            </label>
+            {activeTab === 'single' && displayFiles.length > 0 && (
+              <div className="space-y-4">
+                {/* 左：文件列表 */}
+                <div>
+                  <div className="rounded-xl border border-border">
+                    <div className="p-4 border-b bg-muted/50">
+                      <h2 className="font-semibold text-sm">已上传文件</h2>
+                    </div>
+                    <div className="divide-y">
+                      {displayFiles.map(file => (
+                        <div
+                          key={file.id}
+                          data-testid="file-item"
+                          data-file-status={file.status}
+                          className={cn(
+                            'p-3 flex items-center justify-between cursor-pointer hover:bg-muted/30 transition-colors',
+                            selectedFileId === file.id && 'bg-primary/5'
+                          )}
+                          onClick={() => setSelectedFileId(file.id)}
+                        >
+                          <div className="flex items-center gap-2 min-w-0">
+                            <FileSearch className="h-4 w-4 text-muted-foreground shrink-0" />
+                            <p className="font-medium text-sm truncate">{file.name}</p>
+                          </div>
+                          <span
+                            className={cn(
+                              'px-2 py-1 rounded text-xs shrink-0',
+                              file.status === 'ready'
+                                ? 'bg-success/10 text-success'
+                                : 'bg-warning/10 text-warning'
+                            )}
+                          >
+                            {file.status === 'ready' ? '就绪' : '处理中'}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                {/* 右：选项区 + 操作按钮 */}
+                {selectedFileId && (
+                  <div className="space-y-4">
+                    <div className="rounded-xl border border-border p-6 bg-card">
+                      <label className="text-sm text-muted-foreground mb-2 block">输出模板</label>
+                      <select
+                        className="border rounded px-3 py-2 w-full"
+                        value={selectedTemplate}
+                        onChange={e => setSelectedTemplate(e.target.value)}
+                      >
+                        {outputTemplates.map(t => (
+                          <option key={t.value} value={t.value}>
+                            {t.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="rounded-xl border border-border p-6 bg-card">
+                      <div className="flex items-center gap-3 mb-4">
+                        <input
+                          type="checkbox"
+                          checked={selectAll}
+                          onChange={e => handleSelectAll(e.target.checked)}
+                          className="w-4 h-4"
+                        />
+                        <span className="font-medium">提取全部要素</span>
+                      </div>
+                      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                        {elementCategories.map(cat => (
+                          <div key={cat.group}>
+                            <p className="text-sm text-muted-foreground mb-2">{cat.group}</p>
+                            <div className="space-y-2">
+                              {cat.items.map(item => (
+                                <label key={item.id} className="flex items-center gap-2 text-sm">
+                                  <input
+                                    type="checkbox"
+                                    checked={selectedElements.includes(item.id)}
+                                    onChange={() => handleSelectElement(item.id)}
+                                    className="w-4 h-4"
+                                  />
+                                  {item.label}
+                                </label>
+                              ))}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    <button
+                      data-testid="extract-button"
+                      onClick={handleExtract}
+                      disabled={isStreaming || selectedElements.length === 0}
+                      className="w-full py-3 bg-primary text-primary-foreground rounded-lg font-medium hover:bg-primary/90 disabled:opacity-40 flex items-center justify-center gap-2 transition-colors"
+                    >
+                      {isStreaming ? (
+                        <>
+                          <Loader2 className="h-5 w-5 animate-spin" />
+                          提取中...
+                        </>
+                      ) : (
+                        <>
+                          <FileSearch className="h-5 w-5" />
+                          开始提取要素
+                        </>
+                      )}
+                    </button>
+
+                    {isStreaming && (
+                      <button
+                        data-testid="stop-button"
+                        onClick={handleStop}
+                        className="w-full py-2 border rounded-lg text-muted-foreground hover:bg-muted"
+                      >
+                        停止提取
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* 批量对比 Tab */}
+            {activeTab === 'batch' && (
+              <div className="space-y-4">
                 <div className="rounded-xl border border-border">
                   <div className="p-4 border-b bg-muted/50">
-                    <h2 className="font-semibold text-sm">已上传文件</h2>
+                    <h2 className="font-semibold">选择要对比的文件（至少 2 个）</h2>
                   </div>
                   <div className="divide-y">
-                    {displayFiles.map(file => (
-                      <div
-                        key={file.id}
-                        data-testid="file-item"
-                        data-file-status={file.status}
-                        className={cn(
-                          'p-3 flex items-center justify-between cursor-pointer hover:bg-muted/30 transition-colors',
-                          selectedFileId === file.id && 'bg-primary/5'
-                        )}
-                        onClick={() => setSelectedFileId(file.id)}
-                      >
-                        <div className="flex items-center gap-2 min-w-0">
-                          <FileSearch className="h-4 w-4 text-muted-foreground shrink-0" />
-                          <p className="font-medium text-sm truncate">{file.name}</p>
-                        </div>
-                        <span
+                    {readyFiles.length === 0 ? (
+                      <div className="p-8 text-center text-muted-foreground text-sm">
+                        还没有已上传的文件，请先在顶部上传
+                      </div>
+                    ) : (
+                      readyFiles.map(file => (
+                        <div
+                          key={file.id}
                           className={cn(
-                            'px-2 py-1 rounded text-xs shrink-0',
-                            file.status === 'ready'
-                              ? 'bg-success/10 text-success'
-                              : 'bg-warning/10 text-warning'
+                            'p-4 flex items-center justify-between cursor-pointer hover:bg-muted/30 transition-colors',
+                            selectedFileIds.includes(file.id) && 'bg-primary/5'
                           )}
+                          onClick={() => toggleFileSelection(file.id)}
                         >
-                          {file.status === 'ready' ? '就绪' : '处理中'}
-                        </span>
+                          <div className="flex items-center gap-3">
+                            <input
+                              type="checkbox"
+                              checked={selectedFileIds.includes(file.id)}
+                              onChange={() => toggleFileSelection(file.id)}
+                              className="w-4 h-4"
+                              onClick={e => e.stopPropagation()}
+                            />
+                            <FileSearch className="h-5 w-5 text-muted-foreground" />
+                            <div>
+                              <p className="font-medium">{file.name}</p>
+                              <p className="text-sm text-muted-foreground">
+                                {(file.size / 1024).toFixed(1)} KB
+                              </p>
+                            </div>
+                          </div>
+                          <span className="px-2 py-1 rounded text-xs bg-success/10 text-success">
+                            就绪
+                          </span>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-border p-6 bg-card">
+                  <div className="flex items-center gap-3 mb-4">
+                    <input
+                      type="checkbox"
+                      checked={selectAll}
+                      onChange={e => handleSelectAll(e.target.checked)}
+                      className="w-4 h-4"
+                    />
+                    <span className="font-medium">对比全部要素</span>
+                  </div>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    {elementCategories.map(cat => (
+                      <div key={cat.group}>
+                        <p className="text-sm text-muted-foreground mb-2">{cat.group}</p>
+                        <div className="space-y-2">
+                          {cat.items.map(item => (
+                            <label key={item.id} className="flex items-center gap-2 text-sm">
+                              <input
+                                type="checkbox"
+                                checked={selectedElements.includes(item.id)}
+                                onChange={() => handleSelectElement(item.id)}
+                                className="w-4 h-4"
+                              />
+                              {item.label}
+                            </label>
+                          ))}
+                        </div>
                       </div>
                     ))}
                   </div>
                 </div>
-              </div>
 
-              {/* 右：选项区 + 操作按钮 */}
-              {selectedFileId && (
-                <div className="space-y-4">
-                  <div className="rounded-xl border border-border p-6 bg-card">
-                    <label className="text-sm text-muted-foreground mb-2 block">输出模板</label>
-                    <select
-                      className="border rounded px-3 py-2 w-full"
-                      value={selectedTemplate}
-                      onChange={e => setSelectedTemplate(e.target.value)}
-                    >
-                      {outputTemplates.map(t => (
-                        <option key={t.value} value={t.value}>
-                          {t.label}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div className="rounded-xl border border-border p-6 bg-card">
-                    <div className="flex items-center gap-3 mb-4">
-                      <input
-                        type="checkbox"
-                        checked={selectAll}
-                        onChange={e => handleSelectAll(e.target.checked)}
-                        className="w-4 h-4"
-                      />
-                      <span className="font-medium">提取全部要素</span>
-                    </div>
-                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                      {elementCategories.map(cat => (
-                        <div key={cat.group}>
-                          <p className="text-sm text-muted-foreground mb-2">{cat.group}</p>
-                          <div className="space-y-2">
-                            {cat.items.map(item => (
-                              <label key={item.id} className="flex items-center gap-2 text-sm">
-                                <input
-                                  type="checkbox"
-                                  checked={selectedElements.includes(item.id)}
-                                  onChange={() => handleSelectElement(item.id)}
-                                  className="w-4 h-4"
-                                />
-                                {item.label}
-                              </label>
-                            ))}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-
-                  <button
-                    data-testid="extract-button"
-                    onClick={handleExtract}
-                    disabled={isStreaming || selectedElements.length === 0}
-                    className="w-full py-3 bg-primary text-primary-foreground rounded-lg font-medium hover:bg-primary/90 disabled:opacity-40 flex items-center justify-center gap-2 transition-colors"
-                  >
-                    {isStreaming ? (
-                      <>
-                        <Loader2 className="h-5 w-5 animate-spin" />
-                        提取中...
-                      </>
-                    ) : (
-                      <>
-                        <FileSearch className="h-5 w-5" />
-                        开始提取要素
-                      </>
-                    )}
-                  </button>
-
-                  {isStreaming && (
-                    <button
-                      data-testid="stop-button"
-                      onClick={handleStop}
-                      className="w-full py-2 border rounded-lg text-muted-foreground hover:bg-muted"
-                    >
-                      停止提取
-                    </button>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* 批量对比 Tab */}
-          {activeTab === 'batch' && (
-            <div className="space-y-4">
-              <div className="rounded-xl border border-border">
-                <div className="p-4 border-b bg-muted/50">
-                  <h2 className="font-semibold">选择要对比的文件（至少 2 个）</h2>
-                </div>
-                <div className="divide-y">
-                  {readyFiles.length === 0 ? (
-                    <div className="p-8 text-center text-muted-foreground text-sm">
-                      还没有已上传的文件，请先在顶部上传
-                    </div>
+                <button
+                  data-testid="batch-button"
+                  onClick={handleBatchExtract}
+                  disabled={
+                    isStreaming || selectedFileIds.length < 2 || selectedElements.length === 0
+                  }
+                  className="w-full py-3 bg-primary text-primary-foreground rounded-lg font-medium hover:bg-primary/90 disabled:opacity-50 flex items-center justify-center gap-2"
+                >
+                  {isStreaming ? (
+                    <>
+                      <Loader2 className="h-5 w-5 animate-spin" />
+                      对比分析中...
+                    </>
                   ) : (
-                    readyFiles.map(file => (
-                      <div
-                        key={file.id}
-                        className={cn(
-                          'p-4 flex items-center justify-between cursor-pointer hover:bg-muted/30 transition-colors',
-                          selectedFileIds.includes(file.id) && 'bg-primary/5'
-                        )}
-                        onClick={() => toggleFileSelection(file.id)}
-                      >
-                        <div className="flex items-center gap-3">
-                          <input
-                            type="checkbox"
-                            checked={selectedFileIds.includes(file.id)}
-                            onChange={() => toggleFileSelection(file.id)}
-                            className="w-4 h-4"
-                            onClick={e => e.stopPropagation()}
-                          />
-                          <FileSearch className="h-5 w-5 text-muted-foreground" />
-                          <div>
-                            <p className="font-medium">{file.name}</p>
-                            <p className="text-sm text-muted-foreground">
-                              {(file.size / 1024).toFixed(1)} KB
-                            </p>
-                          </div>
-                        </div>
-                        <span className="px-2 py-1 rounded text-xs bg-success/10 text-success">
-                          就绪
-                        </span>
-                      </div>
-                    ))
+                    <>
+                      <BarChart3 className="h-5 w-5" />
+                      开始批量对比（已选 {selectedFileIds.length} 个文件）
+                    </>
                   )}
-                </div>
-              </div>
+                </button>
 
-              <div className="rounded-xl border border-border p-6 bg-card">
-                <div className="flex items-center gap-3 mb-4">
-                  <input
-                    type="checkbox"
-                    checked={selectAll}
-                    onChange={e => handleSelectAll(e.target.checked)}
-                    className="w-4 h-4"
+                {isStreaming && (
+                  <button
+                    onClick={handleStop}
+                    className="w-full py-2 rounded-xl border border-border text-muted-foreground hover:bg-muted"
+                  >
+                    停止分析
+                  </button>
+                )}
+              </div>
+            )}
+
+            {/* 门槛分析 Tab */}
+            {activeTab === 'threshold' && selectedFileId && (
+              <div className="space-y-4">
+                <div className="rounded-xl border border-border p-6 bg-card">
+                  <label className="text-sm text-muted-foreground mb-2 block">
+                    填写自身资质、业绩条件
+                  </label>
+                  <textarea
+                    data-testid="threshold-textarea"
+                    className="w-full border rounded p-3 text-sm min-h-[120px]"
+                    placeholder="请输入您的资质、业绩、人员信息，系统将对比招标文件要求进行匹配分析..."
+                    value={thresholdText}
+                    onChange={e => setThresholdText(e.target.value)}
                   />
-                  <span className="font-medium">对比全部要素</span>
                 </div>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                  {elementCategories.map(cat => (
-                    <div key={cat.group}>
-                      <p className="text-sm text-muted-foreground mb-2">{cat.group}</p>
-                      <div className="space-y-2">
-                        {cat.items.map(item => (
-                          <label key={item.id} className="flex items-center gap-2 text-sm">
-                            <input
-                              type="checkbox"
-                              checked={selectedElements.includes(item.id)}
-                              onChange={() => handleSelectElement(item.id)}
-                              className="w-4 h-4"
-                            />
-                            {item.label}
-                          </label>
-                        ))}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
+                <button
+                  data-testid="threshold-button"
+                  onClick={handleThresholdExtract}
+                  disabled={isStreaming || !thresholdText.trim()}
+                  className="w-full py-3 bg-primary text-primary-foreground rounded-lg font-medium hover:bg-primary/90 disabled:opacity-50 flex items-center justify-center gap-2"
+                >
+                  {isStreaming ? (
+                    <>
+                      <Loader2 className="h-5 w-5 animate-spin" />
+                      分析中...
+                    </>
+                  ) : (
+                    <>
+                      <Shield className="h-5 w-5" />
+                      开始门槛分析
+                    </>
+                  )}
+                </button>
 
-              <button
-                data-testid="batch-button"
-                onClick={handleBatchExtract}
-                disabled={
-                  isStreaming || selectedFileIds.length < 2 || selectedElements.length === 0
-                }
-                className="w-full py-3 bg-primary text-primary-foreground rounded-lg font-medium hover:bg-primary/90 disabled:opacity-50 flex items-center justify-center gap-2"
-              >
-                {isStreaming ? (
-                  <>
-                    <Loader2 className="h-5 w-5 animate-spin" />
-                    对比分析中...
-                  </>
-                ) : (
-                  <>
-                    <BarChart3 className="h-5 w-5" />
-                    开始批量对比（已选 {selectedFileIds.length} 个文件）
-                  </>
+                {isStreaming && (
+                  <button
+                    onClick={handleStop}
+                    className="w-full py-2 rounded-xl border border-border text-muted-foreground hover:bg-muted"
+                  >
+                    停止分析
+                  </button>
                 )}
-              </button>
-
-              {isStreaming && (
-                <button
-                  onClick={handleStop}
-                  className="w-full py-2 rounded-xl border border-border text-muted-foreground hover:bg-muted"
-                >
-                  停止分析
-                </button>
-              )}
-            </div>
-          )}
-
-          {/* 门槛分析 Tab */}
-          {activeTab === 'threshold' && selectedFileId && (
-            <div className="space-y-4">
-              <div className="rounded-xl border border-border p-6 bg-card">
-                <label className="text-sm text-muted-foreground mb-2 block">填写自身资质条件</label>
-                <textarea
-                  data-testid="threshold-textarea"
-                  className="w-full border rounded p-3 text-sm min-h-[120px]"
-                  placeholder="请输入您的资质、业绩、人员信息，系统将对比招标文件要求进行匹配分析..."
-                  value={thresholdText}
-                  onChange={e => setThresholdText(e.target.value)}
-                />
               </div>
-              <button
-                data-testid="threshold-button"
-                onClick={handleThresholdExtract}
-                disabled={isStreaming || !thresholdText.trim()}
-                className="w-full py-3 bg-primary text-primary-foreground rounded-lg font-medium hover:bg-primary/90 disabled:opacity-50 flex items-center justify-center gap-2"
-              >
-                {isStreaming ? (
-                  <>
-                    <Loader2 className="h-5 w-5 animate-spin" />
-                    分析中...
-                  </>
-                ) : (
-                  <>
-                    <Shield className="h-5 w-5" />
-                    开始门槛分析
-                  </>
-                )}
-              </button>
+            )}
 
-              {isStreaming && (
-                <button
-                  onClick={handleStop}
-                  className="w-full py-2 rounded-xl border border-border text-muted-foreground hover:bg-muted"
-                >
-                  停止分析
-                </button>
-              )}
-            </div>
-          )}
-
-          {/* 门槛分析无需文件选中提示 */}
-          {activeTab === 'threshold' && !selectedFileId && (
-            <div className="rounded-xl border border-border p-8 text-center text-muted-foreground text-sm">
-              请先在顶部上传并选择一个招标文件
-            </div>
-          )}
-        </div>
-
-        <aside className="rounded-2xl border border-border bg-card shadow-sm xl:sticky xl:top-6">
-          <div className="flex items-start justify-between gap-4 border-b border-border px-5 py-4">
-            <div>
-              <h2 className="text-xl font-semibold text-foreground">输出预览</h2>
-              <p className="mt-1 text-s text-muted-foreground">
-                任务执行后，提取文本会在这里实时展示
-              </p>
-            </div>
-            {streamRawText && (
-              <div className="flex shrink-0 items-center gap-1">
-                <button
-                  onClick={handleCopy}
-                  className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
-                  title="复制"
-                >
-                  <Copy className="h-3.5 w-3.5" />
-                  复制
-                </button>
-                <button
-                  onClick={handleDownload}
-                  className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
-                  title="下载 MD"
-                >
-                  <Download className="h-3.5 w-3.5" />
-                  下载
-                </button>
+            {/* 门槛分析无需文件选中提示 */}
+            {activeTab === 'threshold' && !selectedFileId && (
+              <div className="rounded-xl border border-border p-8 text-center text-muted-foreground text-sm">
+                请先在顶部上传并选择一个招标文件
               </div>
             )}
           </div>
 
-          <div className="max-h-[calc(100vh-12rem)] min-h-[520px] overflow-auto p-5">
-            {(isStreaming || isDone || errorMessage) && (
-              <div className="mb-5">
-                <TaskProgress
-                  phases={extractPhases}
-                  currentPhase={currentPhase}
-                  percentage={percentage}
-                  message={progressMessage}
-                  isActive={isStreaming}
-                  isDone={isDone}
-                  errorMessage={errorMessage}
-                  showStop={isStreaming}
-                  onStop={handleStop}
-                />
-              </div>
-            )}
-
-            {extractedElements.length > 0 && (
-              <div className="space-y-4">
-                <div className="text-sm font-medium text-foreground">
-                  提取结果（{extractedElements.length} 个要素）
-                </div>
-                <div className="grid gap-4">
-                  {extractedElements.map((elem, idx) => (
-                    <div
-                      key={idx}
-                      data-testid="element-card"
-                      className="overflow-hidden rounded-xl border border-border bg-background"
-                    >
-                      <div className="border-b border-border bg-muted/50 px-4 py-3">
-                        <span className="font-medium text-sm text-foreground">{elem.name}</span>
-                      </div>
-                      <div className="p-4">
-                        <div className="markdown-body text-sm leading-relaxed">{elem.content}</div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {extractedElements.length === 0 && streamRawText && (
-              <div className="overflow-hidden rounded-xl border border-border bg-background">
-                <div className="border-b border-border bg-muted/50 px-4 py-3">
-                  <span className="font-medium text-sm text-foreground">分析结果</span>
-                </div>
-                <div className="p-4">
-                  <div className="markdown-body text-sm leading-relaxed whitespace-pre-wrap">
-                    {streamRawText}
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {!streamRawText && !isStreaming && !errorMessage && (
-              <div className="flex min-h-[420px] flex-col items-center justify-center rounded-xl border border-dashed border-border bg-muted/20 px-6 text-center">
-                <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-primary/10">
-                  <FileText className="h-6 w-6 text-primary" />
-                </div>
-                <p className="font-medium text-foreground">等待生成提取结果</p>
-                <p className="mt-2 max-w-sm text-sm leading-relaxed text-muted-foreground">
-                  左侧选择文件、模板和要素后开始任务，AI 输出会在右侧保持独立预览。
+          <aside className="rounded-2xl border border-border bg-card shadow-sm xl:sticky xl:top-6">
+            <div className="flex items-start justify-between gap-4 border-b border-border px-5 py-4">
+              <div>
+                <h2 className="text-xl font-semibold text-foreground">输出预览</h2>
+                <p className="mt-1 text-s text-muted-foreground">
+                  任务执行后，提取文本会在这里实时展示
                 </p>
               </div>
-            )}
-          </div>
-        </aside>
+              {streamRawText && (
+                <div className="flex shrink-0 items-center gap-1">
+                  <button
+                    onClick={() => setShowMarkdownPreview(prev => !prev)}
+                    className={cn(
+                      'inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-xs hover:bg-muted',
+                      showMarkdownPreview
+                        ? 'bg-primary/10 text-primary'
+                        : 'text-muted-foreground hover:text-foreground'
+                    )}
+                    title="Markdown 预览"
+                  >
+                    <FileText className="h-3.5 w-3.5" />
+                    Markdown
+                  </button>
+                  <button
+                    onClick={handleCopy}
+                    className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
+                    title="复制"
+                  >
+                    <Copy className="h-3.5 w-3.5" />
+                    复制
+                  </button>
+                  <button
+                    onClick={handleDownload}
+                    className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
+                    title="下载 MD"
+                  >
+                    <Download className="h-3.5 w-3.5" />
+                    下载
+                  </button>
+                </div>
+              )}
+            </div>
+
+            <div className="max-h-[calc(100vh-12rem)] min-h-[520px] overflow-auto p-5">
+              {(isStreaming || isDone || errorMessage) && (
+                <div className="mb-5">
+                  <TaskProgress
+                    phases={extractPhases}
+                    currentPhase={currentPhase}
+                    percentage={percentage}
+                    message={progressMessage}
+                    isActive={isStreaming}
+                    isDone={isDone}
+                    errorMessage={errorMessage}
+                    showStop={isStreaming}
+                    onStop={handleStop}
+                  />
+                </div>
+              )}
+
+              {extractedElements.length > 0 && (
+                <div className="space-y-4">
+                  <div className="text-sm font-medium text-foreground">
+                    提取结果（{extractedElements.length} 个要素）
+                  </div>
+                  <div className="grid gap-4">
+                    {extractedElements.map((elem, idx) => (
+                      <div
+                        key={idx}
+                        data-testid="element-card"
+                        className="overflow-hidden rounded-xl border border-border bg-background"
+                      >
+                        <div className="border-b border-border bg-muted/50 px-4 py-3">
+                          <span className="font-medium text-sm text-foreground">{elem.name}</span>
+                        </div>
+                        <div className="p-4">
+                          <div
+                            className={cn(
+                              'markdown-body text-sm leading-relaxed',
+                              !showMarkdownPreview && 'whitespace-pre-wrap'
+                            )}
+                          >
+                            {renderPreviewText(elem.content)}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {extractedElements.length === 0 && streamRawText && (
+                <div className="overflow-hidden rounded-xl border border-border bg-background">
+                  <div className="border-b border-border bg-muted/50 px-4 py-3">
+                    <span className="font-medium text-sm text-foreground">分析结果</span>
+                  </div>
+                  <div className="p-4">
+                    <div
+                      className={cn(
+                        'markdown-body text-sm leading-relaxed',
+                        !showMarkdownPreview && 'whitespace-pre-wrap'
+                      )}
+                    >
+                      {renderPreviewText(streamRawText)}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {!streamRawText && !isStreaming && !errorMessage && (
+                <div className="flex min-h-[420px] flex-col items-center justify-center rounded-xl border border-dashed border-border bg-muted/20 px-6 text-center">
+                  <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-primary/10">
+                    <FileText className="h-6 w-6 text-primary" />
+                  </div>
+                  <p className="font-medium text-foreground">等待生成提取结果</p>
+                  <p className="mt-2 max-w-sm text-sm leading-relaxed text-muted-foreground">
+                    左侧选择文件、模板和要素后开始任务，AI 输出会在右侧保持独立预览。
+                  </p>
+                </div>
+              )}
+            </div>
+          </aside>
+        </div>
       </div>
-    </div>
+    </WorkbenchLayout>
   );
 }

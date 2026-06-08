@@ -154,10 +154,17 @@ async def update_file(file_id: str, updates: dict) -> bool:
     return "UPDATE 1" in result
 
 
-async def get_file_content(file_id: str) -> Optional[bytes]:
+async def get_file_content(file_id: str, user_id: Optional[str] = None) -> Optional[bytes]:
     """获取文件的加密内容（BYTEA 列）。"""
     db = await get_database()
-    row = await db.fetch_one("SELECT encrypted_content FROM files WHERE id = $1", file_id)
+    if user_id:
+        row = await db.fetch_one(
+            "SELECT encrypted_content FROM files WHERE id = $1 AND user_id = $2",
+            file_id,
+            user_id,
+        )
+    else:
+        row = await db.fetch_one("SELECT encrypted_content FROM files WHERE id = $1", file_id)
     return row["encrypted_content"] if row and row["encrypted_content"] is not None else None
 
 
@@ -186,7 +193,11 @@ async def find_completed_extract(source_hash: str, template_type: str, mode: str
         if isinstance(row.get("elements"), str):
             row["elements"] = json.loads(row["elements"])
         stored_names = {e.get("name") for e in row.get("elements", []) if isinstance(e, dict)}
-        if expected_names and stored_names and not expected_names.issubset(stored_names):
+        if expected_names and stored_names:
+            if expected_names.issubset(stored_names):
+                return _serialize_row(row)
+            continue
+        if expected_names and not stored_names and set(elements or []) != set(element_name_map):
             continue
         return _serialize_row(row)
     return None

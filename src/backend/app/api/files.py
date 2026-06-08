@@ -133,7 +133,7 @@ async def download_file(file_id: str, current_user: dict = Depends(get_current_u
     filename = record.get("original_name", f"{file_id}.pdf")
     try:
         file_service = FileService()
-        content = await file_service.download(file_id)
+        content = await file_service.download(file_id, current_user["id"])
         encoded_filename = quote(filename)
         return StreamingResponse(
             iter([content]),

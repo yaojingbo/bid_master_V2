@@ -5,7 +5,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.services.extract_service import ExtractService, extract_text_from_content
+from app.services.extract_service import (
+    ExtractService,
+    _parse_markdown_elements_response,
+    extract_text_from_content,
+)
 
 
 class TestExtractTextFromContent:
@@ -28,6 +32,34 @@ class TestExtractTextFromContent:
         text, needs_ocr = extract_text_from_content(b"PK\x03\x04invalid")
         assert text == ""
         assert needs_ocr is False
+
+
+class TestMarkdownElementParsing:
+    def test_parse_numbered_markdown_sections(self):
+        """非 JSON 输出也应按要素标题分块。"""
+        elements = _parse_markdown_elements_response(
+            """
+一、项目基本信息
+- 项目名称：污水处理厂改造
+
+二、资质门槛
+- 市政公用工程施工总承包三级及以上
+
+三、评分细则
+| 项目 | 分值 |
+| --- | --- |
+| 技术方案 | 30 |
+"""
+        )
+
+        assert [element["name"] for element in elements] == [
+            "项目基本信息",
+            "资质要求",
+            "分值分配与评分细则",
+        ]
+        assert "污水处理厂" in elements[0]["content"]
+        assert "市政公用工程" in elements[1]["content"]
+        assert "技术方案" in elements[2]["content"]
 
 
 class TestExtractService:
@@ -73,7 +105,7 @@ class TestExtractService:
             async for event in service.extract_elements_stream("file-1", provider="deepseek"):
                 events.append(event)
 
-        file_service.download.assert_awaited_once_with("file-1")
+        file_service.download.assert_awaited_once_with("file-1", None)
         assert mock_stream.called
         assert any(event["type"] == "progress" for event in events)
         assert events[-1]["type"] == "done"

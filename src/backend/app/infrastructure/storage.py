@@ -55,7 +55,7 @@ class StorageService:
             return file_id, str(file_path), encrypted_content
         return file_id, f"pg://{file_id}", encrypted_content
 
-    async def read(self, file_id: str) -> bytes:
+    async def read(self, file_id: str, user_id: str = None) -> bytes:
         """
         Read and decrypt file content from PostgreSQL.
 
@@ -72,7 +72,7 @@ class StorageService:
             async with aiofiles.open(file_path, "rb") as f:
                 encrypted_content = await f.read()
         else:
-            encrypted_content = await get_file_content(file_id)
+            encrypted_content = await get_file_content(file_id, user_id)
             if encrypted_content is None:
                 raise FileNotFoundError(f"File not found: {file_id}")
 

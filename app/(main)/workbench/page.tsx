@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { useEffect, useMemo, useState } from 'react';
 import {
   BarChart3,
   BookOpen,
@@ -15,8 +16,9 @@ import {
   Sparkles,
   Terminal,
   Upload,
-  User,
 } from 'lucide-react';
+import { getStats, type DataStats } from '@/lib/data-api';
+import { useSettingsStore } from '@/stores/settings-store';
 
 const workspaceNav = [
   {
@@ -61,13 +63,49 @@ const actionCards = [
   },
 ];
 
-const recentCards = [
-  { title: '招标文件要素提取', desc: '最近上传 0 份', icon: FileSearch },
-  { title: '模拟招标文件编制', desc: '最近生成 0 份', icon: FileText },
-  { title: '开标报价分析', desc: '最近分析 0 次', icon: BarChart3 },
-];
+const emptyStats: DataStats = {
+  files: 0,
+  simulate_tasks: 0,
+  opening_results: 0,
+  extract_results: 0,
+};
 
 export default function WorkbenchPage() {
+  const [stats, setStats] = useState<DataStats>(emptyStats);
+  const { activeModel } = useSettingsStore();
+
+  useEffect(() => {
+    getStats()
+      .then(setStats)
+      .catch(() => setStats(emptyStats));
+  }, []);
+
+  const generatedReports = stats.simulate_tasks + stats.opening_results + stats.extract_results;
+
+  const recentCards = useMemo(
+    () => [
+      {
+        href: '/database?tab=extracts',
+        title: '招标文件要素提取',
+        desc: `最近上传 ${stats.extract_results} 份`,
+        icon: FileSearch,
+      },
+      {
+        href: '/database?tab=simulates',
+        title: '模拟招标文件编制',
+        desc: `最近生成 ${stats.simulate_tasks} 份`,
+        icon: FileText,
+      },
+      {
+        href: '/database?tab=openings',
+        title: '开标报价分析',
+        desc: `最近分析 ${stats.opening_results} 次`,
+        icon: BarChart3,
+      },
+    ],
+    [stats.extract_results, stats.opening_results, stats.simulate_tasks]
+  );
+
   return (
     <div className="mx-auto flex max-w-none gap-8 px-0">
       <aside className="flex min-h-[calc(100vh-10rem)] w-56 shrink-0 flex-col border-r border-border pr-4">
@@ -113,17 +151,11 @@ export default function WorkbenchPage() {
             </div>
             <Settings className="h-4 w-4 text-muted-foreground" />
           </div>
-          <Link
-            href="/register"
-            className="flex items-center gap-2 text-sm font-medium text-primary"
-          >
+          <Link href="/register" className="flex items-center gap-2 text-sm font-medium text-primary">
             <Crown className="h-4 w-4" />
             注册账号
           </Link>
-          <Link
-            href="/login"
-            className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground"
-          >
+          <Link href="/login" className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground">
             <LogIn className="h-4 w-4" />
             退出登录
           </Link>
@@ -170,18 +202,24 @@ export default function WorkbenchPage() {
             <h2 className="text-sm font-semibold text-foreground">你的工作概览</h2>
           </div>
           <div className="grid grid-cols-1 divide-y divide-border md:grid-cols-3 md:divide-x md:divide-y-0">
-            <div className="py-3 md:py-0 md:pr-8">
+            <Link href="/database?tab=files" className="group py-3 md:py-0 md:pr-8">
               <p className="text-sm text-muted-foreground">已处理文件</p>
-              <p className="mt-1 text-[28px] font-bold tracking-tight text-foreground">152</p>
-            </div>
-            <div className="py-3 md:px-8 md:py-0">
+              <p className="mt-1 text-[28px] font-bold tracking-tight text-foreground group-hover:text-primary">
+                {stats.files}
+              </p>
+            </Link>
+            <Link href="/database?tab=extracts" className="group py-3 md:px-8 md:py-0">
               <p className="text-sm text-muted-foreground">已生成报告</p>
-              <p className="mt-1 text-[28px] font-bold tracking-tight text-foreground">2276</p>
-            </div>
-            <div className="py-3 md:py-0 md:pl-8">
+              <p className="mt-1 text-[28px] font-bold tracking-tight text-foreground group-hover:text-primary">
+                {generatedReports}
+              </p>
+            </Link>
+            <Link href="/settings" className="group py-3 md:py-0 md:pl-8">
               <p className="text-sm text-muted-foreground">常用模型</p>
-              <p className="mt-1 text-[28px] font-bold tracking-tight text-foreground">AI+</p>
-            </div>
+              <p className="mt-1 truncate text-[28px] font-bold tracking-tight text-foreground group-hover:text-primary">
+                {activeModel || '未配置'}
+              </p>
+            </Link>
           </div>
         </section>
 
@@ -194,11 +232,17 @@ export default function WorkbenchPage() {
           </div>
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
             {recentCards.map(card => (
-              <div key={card.title} className="rounded-2xl border border-border px-5 py-5">
+              <Link
+                key={card.title}
+                href={card.href}
+                className="group rounded-2xl border border-border px-5 py-5 transition-colors hover:border-primary/25 hover:bg-muted/30"
+              >
                 <card.icon className="mb-4 h-5 w-5 text-primary" />
-                <p className="text-[15px] font-semibold text-foreground">{card.title}</p>
+                <p className="text-[15px] font-semibold text-foreground group-hover:text-primary">
+                  {card.title}
+                </p>
                 <p className="mt-2 text-[13px] text-muted-foreground">{card.desc}</p>
-              </div>
+              </Link>
             ))}
           </div>
         </section>

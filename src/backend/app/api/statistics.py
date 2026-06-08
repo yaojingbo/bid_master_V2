@@ -551,7 +551,7 @@ async def analyze_opening(request: OpeningAnalysisRequest, current_user: dict = 
         from app.services.file_service import get_file_service
         file_service = get_file_service()
 
-        content = await file_service.download(request.fileId)
+        content = await file_service.download(request.fileId, current_user["id"])
 
         # Parse filename from mock storage or use generic
         filename = "bid_opening.xlsx"
@@ -571,7 +571,7 @@ async def analyze_opening(request: OpeningAnalysisRequest, current_user: dict = 
         modules = request.modules or None
         result = compute_all_dimensions(parsed["bidders"], parsed["meta"], modules)
 
-        file_record = await get_file(request.fileId)
+        file_record = await get_file(request.fileId, current_user["id"])
         original_name = file_record.get("original_name", "") if file_record else ""
 
         # 保存开标结果到 mock_storage
@@ -784,7 +784,7 @@ async def analyze_comprehensive(request: OpeningAnalysisRequest, current_user: d
         from app.services.file_service import get_file_service
         file_service = get_file_service()
 
-        content = await file_service.download(request.fileId)
+        content = await file_service.download(request.fileId, current_user["id"])
         filename = "bid_opening.xlsx"
 
         parsed = parse_opening_excel(content, filename)
@@ -844,7 +844,7 @@ async def start_comprehensive_analysis(
         from app.services.file_service import get_file_service
         file_service = get_file_service()
 
-        content = await file_service.download(request.fileId)
+        content = await file_service.download(request.fileId, current_user["id"])
         source_hash = calculate_content_hash(content)
         filename = "bid_opening.xlsx"
         parsed = parse_opening_excel(content, filename)
@@ -854,7 +854,7 @@ async def start_comprehensive_analysis(
             return {"success": True, "task_id": cached["id"], "cached": True}
         analysis_data = compute_all_dimensions(parsed["bidders"], parsed["meta"], modules)
 
-        file_record = await get_file(request.fileId)
+        file_record = await get_file(request.fileId, current_user["id"])
         original_name = file_record.get("original_name", "") if file_record else ""
 
         task_id = str(uuid.uuid4())[:8]

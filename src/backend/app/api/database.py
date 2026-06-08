@@ -77,7 +77,7 @@ async def api_download_file(file_id: str, current_user: dict = Depends(get_curre
         raise HTTPException(status_code=404, detail="File not found")
     try:
         file_service = get_file_service()
-        content = await file_service.download(file_id)
+        content = await file_service.download(file_id, current_user["id"])
         filename = record.get("original_name", file_id)
         encoded_filename = quote(filename)
         return StreamingResponse(
@@ -101,7 +101,7 @@ async def api_preview_file(file_id: str, current_user: dict = Depends(get_curren
         raise HTTPException(status_code=404, detail="File not found")
     try:
         file_service = get_file_service()
-        content = await file_service.download(file_id)
+        content = await file_service.download(file_id, current_user["id"])
         mime_map = {
             "pdf": "application/pdf",
             "word": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -140,7 +140,7 @@ async def api_batch_download_files(body: BatchDownloadRequest, current_user: dic
             if not record:
                 continue
             try:
-                content = await file_service.download(file_id)
+                content = await file_service.download(file_id, current_user["id"])
                 filename = record.get("original_name", file_id)
                 # 去重：同名文件加 ID 后缀
                 info = zf.NameToInfo.get(filename)
