@@ -102,6 +102,18 @@ interface TaskData {
   step4Result: string;
 }
 
+const toTaskData = (data: any): TaskData => ({
+  taskId: data.taskId,
+  currentStep: data.currentStep,
+  status: data.status,
+  fileIds: data.fileIds,
+  params: data.params || {},
+  step1Result: data.step1Result || '',
+  step2Result: data.step2Result || '',
+  step3Result: data.step3Result || '',
+  step4Result: data.step4Result || '',
+});
+
 export default function SimulatePage() {
   const { activeProvider, activeModel } = useSettingsStore();
   const [task, setTask] = useState<TaskData | null>(null);
@@ -193,9 +205,10 @@ export default function SimulatePage() {
           useTaskStore.getState().clearSimulate();
           return;
         }
+        const restoredTask = toTaskData(data.data);
         // 恢复任务和流式状态
-        setTask(data.data);
-        setStreamContent(saved.streamContent || '');
+        setTask(restoredTask);
+        setStreamContent(saved.isStreaming ? saved.streamContent || '' : '');
         setIsStreaming(saved.isStreaming || false);
         setRunningStep(saved.runningStep || null);
 
@@ -218,10 +231,10 @@ export default function SimulatePage() {
                   ];
                   const completed = stepResults.find(s => s.step === saved.runningStep && s.result);
                   if (completed) {
-                    setStreamContent(prev => prev + `\n✅ 步骤 ${completed.step} 已在后台完成\n`);
+                    setStreamContent('');
                     setIsStreaming(false);
                     setRunningStep(null);
-                    setTask(t.data);
+                    setTask(toTaskData(t.data));
                     useTaskStore.getState().clearSimulate();
                     return;
                   }
@@ -329,17 +342,7 @@ export default function SimulatePage() {
       });
       const data = await res.json();
       if (data.success) {
-        setTask({
-          taskId: data.data.taskId,
-          currentStep: data.data.currentStep,
-          status: data.data.status,
-          fileIds: data.data.fileIds,
-          params: {},
-          step1Result: '',
-          step2Result: '',
-          step3Result: '',
-          step4Result: '',
-        });
+        setTask(toTaskData(data.data));
       }
     } catch (err) {
       console.error('创建任务失败:', err);
@@ -450,11 +453,12 @@ export default function SimulatePage() {
       }
 
       stopProgressTimer();
+      const nextTask = await refreshTask();
+      if (nextTask) {
+        setStreamContent('');
+      }
       setIsStreaming(false);
       setRunningStep(null);
-
-      // Refresh task to get step results
-      refreshTask();
     } catch (err) {
       if (err instanceof DOMException && err.name === 'AbortError') {
         setStreamContent(prev => prev + '\n⏹ 已停止\n');
@@ -470,25 +474,17 @@ export default function SimulatePage() {
   };
 
   const refreshTask = async () => {
-    if (!task) return;
+    if (!task) return null;
     try {
       const res = await authFetch(`/api/simulate/${task.taskId}`);
       const data = await res.json();
-      if (data.success) {
-        setTask({
-          taskId: data.data.taskId,
-          currentStep: data.data.currentStep,
-          status: data.data.status,
-          fileIds: data.data.fileIds,
-          params: data.data.params || {},
-          step1Result: data.data.step1Result || '',
-          step2Result: data.data.step2Result || '',
-          step3Result: data.data.step3Result || '',
-          step4Result: data.data.step4Result || '',
-        });
-      }
+      if (!data.success || !data.data) return null;
+
+      const nextTask = toTaskData(data.data);
+      setTask(nextTask);
+      return nextTask;
     } catch {
-      // ignore
+      return null;
     }
   };
 
@@ -537,7 +533,7 @@ export default function SimulatePage() {
     useTaskStore.getState().clearSimulate();
   };
 
-  const resultContent = streamContent || getStepResult(task);
+  const resultContent = isStreaming ? streamContent : getStepResult(task);
   const resultTitle = getStepResultTitle(task, runningStep);
   const progressState = getStepProgressState(runningStep, simPercentage);
   const progressMessage = runningStep

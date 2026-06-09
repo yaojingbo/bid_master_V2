@@ -1,5 +1,6 @@
 'use client';
 
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
@@ -26,6 +27,11 @@ const navItems = [
 export function Sidebar() {
   const pathname = usePathname();
   const { user, isAuthenticated, isLoading, logout } = useAuthStore();
+  const [pendingHref, setPendingHref] = useState<string | null>(null);
+
+  useEffect(() => {
+    setPendingHref(null);
+  }, [pathname]);
 
   return (
     <header className="sticky top-0 z-40 border-b border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">
@@ -37,18 +43,22 @@ export function Sidebar() {
         <nav className="flex items-center gap-4">
           {navItems.map(item => {
             const active = pathname === item.href;
+            const pending = pendingHref === item.href && !active;
             return (
               <Link
                 key={item.href}
                 href={item.href}
+                onClick={() => setPendingHref(item.href)}
                 className={cn(
                   'inline-flex h-9 items-center gap-1.5 rounded-full px-4 text-sm font-medium transition-colors',
                   active
                     ? 'bg-muted text-foreground'
-                    : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+                    : 'text-muted-foreground hover:bg-muted hover:text-foreground',
+                  pending && 'bg-muted/70 text-foreground'
                 )}
+                aria-busy={pending}
               >
-                <item.icon className="h-4 w-4" />
+                <item.icon className={cn('h-4 w-4', pending && 'animate-pulse')} />
                 {item.label}
               </Link>
             );

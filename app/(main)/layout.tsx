@@ -17,6 +17,7 @@ export default function MainLayout({
   const pathname = usePathname();
   const router = useRouter();
   const initialized = useRef(false);
+  const isProtected = protectedRoutes.some(r => pathname.startsWith(r));
 
   useEffect(() => {
     if (authDisabled) return;
@@ -33,14 +34,14 @@ export default function MainLayout({
   useEffect(() => {
     if (authDisabled) return;
     if (!authReady) return;
-    const isProtected = protectedRoutes.some(r => pathname.startsWith(r));
-    if (!isAuthenticated && isProtected) {
+    const isProtectedRoute = protectedRoutes.some(r => pathname.startsWith(r));
+    if (!isAuthenticated && isProtectedRoute) {
       router.replace(`/login?callbackUrl=${encodeURIComponent(pathname)}`);
     }
   }, [authReady, isAuthenticated, pathname, router]);
 
-  // authReady 为 false 时不渲染子页面，避免 accessToken 为 null 导致请求 401
-  if (!authDisabled && !authReady) {
+  // 只有受保护页面需要等待认证完成，公共页面优先渲染，减少导航等待感
+  if (!authDisabled && isProtected && !authReady) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background">
         <div className="animate-pulse text-muted-foreground">加载中...</div>

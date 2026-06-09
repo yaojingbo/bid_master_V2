@@ -3,6 +3,7 @@ from __future__ import annotations
 Database connection manager using asyncpg.
 """
 from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
+import asyncio
 import ssl
 import asyncpg
 
@@ -37,20 +38,24 @@ class Database:
         raw_url = database_url or settings.database_url
         self.database_url, self._needs_ssl = _clean_dsn(raw_url)
         self._pool: asyncpg.Pool | None = None
+        self._connect_lock = asyncio.Lock()
 
     async def connect(self) -> None:
         if self._pool:
             return
-        kwargs: dict = {"min_size": 0, "max_size": 10, "max_inactive_connection_lifetime": 120}
-        if self._needs_ssl:
-            ctx = ssl.create_default_context()
-            ctx.check_hostname = False
-            ctx.verify_mode = ssl.CERT_NONE
-            kwargs["ssl"] = ctx
-        if "-pooler" in self.database_url:
-            kwargs["statement_cache_size"] = 0
-        self._pool = await asyncpg.create_pool(self.database_url, **kwargs)
-        print("Database pool connected")
+        async with self._connect_lock:
+            if self._pool:
+                return
+            kwargs: dict = {"min_size": 0, "max_size": 10, "max_inactive_connection_lifetime": 120}
+            if self._needs_ssl:
+                ctx = ssl.create_default_context()
+                ctx.check_hostname = False
+                ctx.verify_mode = ssl.CERT_NONE
+                kwargs["ssl"] = ctx
+            if "-pooler" in self.database_url:
+                kwargs["statement_cache_size"] = 0
+            self._pool = await asyncpg.create_pool(self.database_url, **kwargs)
+            print("Database pool connected")
 
     async def disconnect(self) -> None:
         if self._pool:
@@ -63,15 +68,21 @@ class Database:
             raise RuntimeError("Database not connected. Call await db.connect() first.")
         return self._pool
 
+    async def _reset_pool(self) -> None:
+        pool = self._pool
+        self._pool = None
+        if pool:
+            pool.terminate()
+        await self.connect()
+
     async def _retry(self, fn, *args, retries=2):
         """执行数据库操作，连接断开时重连重试。"""
         for attempt in range(retries + 1):
             try:
                 return await fn(*args)
-            except (ConnectionError, asyncpg.PostgresConnectionError, OSError) as e:
+            except (ConnectionError, asyncpg.PostgresConnectionError, OSError):
                 if attempt < retries:
-                    self._pool = None
-                    await self.connect()
+                    await self._reset_pool()
                 else:
                     raise
 
