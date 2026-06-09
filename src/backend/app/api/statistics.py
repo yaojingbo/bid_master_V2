@@ -35,6 +35,16 @@ router = APIRouter(prefix="/statistics", tags=["statistics"])
 
 OPENING_IDLE_TIMEOUT_SECONDS = 4.0
 OPENING_MAX_IDLE_TICKS = 8
+OPENING_MAX_IDLE_TICKS_LARGE = 20
+
+
+def _opening_idle_ticks(analysis_data: dict) -> int:
+    bidder_count = analysis_data.get("bidder_count", 0) or len(analysis_data.get("bid_ranking") or [])
+    if bidder_count >= 30:
+        return OPENING_MAX_IDLE_TICKS_LARGE
+    if bidder_count >= 10:
+        return 14
+    return OPENING_MAX_IDLE_TICKS
 
 
 def _extract_number(text: str):
@@ -158,7 +168,10 @@ def parse_opening_excel(content: bytes, filename: str) -> dict:
                 elif any(kw in cell for kw in ["制造商", "产地", "品牌"]):
                     col_map["manufacturer"] = col_idx
                     column_mapping[cell] = "manufacturer"
-                elif any(kw in cell for kw in ["投标价", "投标报价", "首次报价"]) and "最终" not in cell:
+                elif any(kw in cell for kw in ["最终投标价", "最终报价", "二次报价"]) and "比较" not in cell:
+                    col_map["final_price"] = col_idx
+                    column_mapping[cell] = "final_price"
+                elif any(kw in cell for kw in ["投标价", "投标报价", "首次报价", "报价(元)", "报价（元）"]) and "最终" not in cell and "比较" not in cell and "方式" not in cell:
                     col_map["bid_price"] = col_idx
                     column_mapping[cell] = "bid_price"
                 elif "资信" in cell:
@@ -207,7 +220,9 @@ def parse_opening_excel(content: bytes, filename: str) -> dict:
             bid_price = _extract_number(bid_price_str)
 
             remarks = str(row.iloc[col_map.get("remarks", len(row) - 1)]).strip()
-            final_price = _extract_final_price(remarks)
+            final_price = _extract_number(str(row.iloc[col_map["final_price"]]).strip()) if "final_price" in col_map else None
+            if final_price is None:
+                final_price = _extract_final_price(remarks)
 
             bidder = {
                 "name": name,
@@ -522,6 +537,20 @@ def get_available_modules(columns: list[str], meta: dict) -> list[dict]:
     return modules
 
 
+def _is_sufficient_opening_analysis(text: str | None) -> bool:
+    if not text:
+        return False
+    required_sections = ["报价", "综合", "建议"]
+    return len(text.strip()) >= 1000 and all(section in text for section in required_sections)
+
+
+async def _find_sufficient_completed_opening(source_hash: str, modules: list[str] | None, user_id: str, require_ai: bool = False) -> dict | None:
+    cached = await find_completed_opening(source_hash, modules, user_id, require_ai=require_ai)
+    if require_ai and cached and not _is_sufficient_opening_analysis(cached.get("ai_analysis")):
+        return None
+    return cached
+
+
 @router.post("/parse")
 async def parse_statistics_data(file: UploadFile = File(...), current_user: dict = Depends(get_current_user)):
     """解析 Excel/CSV 开标数据，返回检测到的列和可用分析维度。"""
@@ -611,7 +640,7 @@ async def analyze_opening_upload(
             module_list = None
         if module_list is None and modules:
             module_list = [m.strip() for m in modules.split(",") if m.strip()]
-        cached = await find_completed_opening(source_hash, module_list, current_user["id"])
+        cached = await _find_sufficient_completed_opening(source_hash, module_list, current_user["id"])
         if cached:
             return {"success": True, "data": _opening_record_to_result(cached), "cached": True}
 
@@ -753,27 +782,137 @@ async def comprehensive_analysis_generator(
 def _fallback_opening_analysis(analysis_data: dict) -> str:
     meta = analysis_data.get("meta") or {}
     stats = analysis_data.get("bid_stats") or {}
+    final_stats = analysis_data.get("final_stats") or {}
     ranking = analysis_data.get("bid_ranking") or []
+    final_ranking = analysis_data.get("final_ranking") or []
+    discounts = analysis_data.get("discount_results") or []
+    scores = analysis_data.get("score_ranking") or []
+    benchmarks = analysis_data.get("benchmark_comparison") or []
+    tiers = analysis_data.get("tiers") or {}
     project_name = meta.get("project_name") or "开标项目"
-    lowest = ranking[0] if ranking else {}
-    highest = ranking[-1] if ranking else {}
-    return "\n".join([
-        f"# {project_name} 开标分析报告",
+    bidder_count = stats.get("count", analysis_data.get("bidder_count", 0))
+
+    lines = [
+        f"# {project_name} 开标综合分析报告",
         "",
-        f"- 有效投标人数量：{stats.get('count', analysis_data.get('bidder_count', 0))}",
+        "## 一、项目与数据概况",
+        f"- 项目名称：{project_name}",
+        f"- 有效投标人数量：{bidder_count}",
+        f"- 最高投标限价：{meta.get('max_price', '未识别')}",
+        f"- 评标基准价：{meta.get('benchmark_price', '未识别')}",
+        f"- D值：{meta.get('d_value', '未识别')}",
+        "",
+        "## 二、报价统计结论",
         f"- 最高报价：{stats.get('max', '未识别')}",
         f"- 最低报价：{stats.get('min', '未识别')}",
         f"- 平均报价：{stats.get('mean', '未识别')}",
-        f"- 离散系数：{stats.get('cv', '未识别')}，报价集中度：{stats.get('cv_level', '未识别')}",
+        f"- 标准差：{stats.get('std_dev', '未识别')}",
+        f"- 离散系数：{stats.get('cv', '未识别')}%，报价集中度：{stats.get('cv_level', '未识别')}",
+        f"- 报价极差：{stats.get('range', '未识别')}",
         "",
-        "## 报价排名摘要",
-        f"- 最低报价单位：{lowest.get('name', '未识别')}，报价 {lowest.get('price', '未识别')}",
-        f"- 最高报价单位：{highest.get('name', '未识别')}，报价 {highest.get('price', '未识别')}",
-        "",
-        "## 综合判断",
-        "- 当前报价数据已完成结构化解析，可用于排名、离散度和竞争格局判断。",
-        "- 如需更细的策略解读，请检查 API Key 后重新生成 AI 综合分析。",
+    ]
+
+    if ranking:
+        lines.extend([
+            "## 三、投标价排名摘要",
+            "| 排名 | 投标单位 | 投标报价 | 偏离均值 | 与最低价差额 |",
+            "| --- | --- | ---: | ---: | ---: |",
+        ])
+        for item in ranking[:10]:
+            lines.append(
+                f"| {item.get('rank')} | {item.get('name')} | {item.get('price')} | {item.get('deviation_pct')}% | {item.get('gap_from_lowest')} |"
+            )
+        lowest = ranking[0]
+        highest = ranking[-1]
+        lines.extend([
+            "",
+            f"- 最低报价单位为 {lowest.get('name')}，报价 {lowest.get('price')}。",
+            f"- 最高报价单位为 {highest.get('name')}，报价 {highest.get('price')}。",
+            "- 若最低价与均值偏离较大，应结合技术响应、商务得分和异常低价规则进一步复核。",
+            "",
+        ])
+
+    if final_ranking:
+        lines.extend([
+            "## 四、最终报价与降价策略",
+            f"- 最终报价最高值：{final_stats.get('max', '未识别')}",
+            f"- 最终报价最低值：{final_stats.get('min', '未识别')}",
+            f"- 最终报价均值：{final_stats.get('mean', '未识别')}",
+            "| 排名 | 投标单位 | 最终报价 | 偏离均值 | 与最低价差额 |",
+            "| --- | --- | ---: | ---: | ---: |",
+        ])
+        for item in final_ranking[:10]:
+            lines.append(
+                f"| {item.get('rank')} | {item.get('name')} | {item.get('price')} | {item.get('deviation_pct')}% | {item.get('gap_from_lowest')} |"
+            )
+        if discounts:
+            aggressive = [item for item in discounts if item.get("strategy") == "激进"]
+            moderate = [item for item in discounts if item.get("strategy") == "适度"]
+            conservative = [item for item in discounts if item.get("strategy") == "保守"]
+            lines.extend([
+                "",
+                f"- 激进降价单位：{len(aggressive)} 家，适度降价单位：{len(moderate)} 家，保守降价单位：{len(conservative)} 家。",
+                "- 降价幅度较大的单位需要重点关注其报价组成、履约能力和后续变更风险。",
+            ])
+        lines.append("")
+    else:
+        lines.extend([
+            "## 四、最终报价与降价策略",
+            "- 当前文件未识别到最终报价或二次报价列，无法形成最终报价排名和降价策略对比。",
+            "- 建议核对表格中是否存在“最终投标价”“最终报价”“二次报价”等字段，或在备注列中保留明确金额。",
+            "",
+        ])
+
+    if tiers:
+        lines.extend(["## 五、价格梯队划分"])
+        for tier_name, members in tiers.items():
+            names = "、".join(item.get("name", "未识别") for item in members[:8]) or "无"
+            lines.append(f"- {tier_name}：{len(members)} 家，代表单位：{names}")
+        lines.extend([
+            "- 梯队分布可用于判断竞争集中度。若多数单位集中在中梯队，说明报价策略趋同；若高低梯队差异明显，应关注报价合理性边界。",
+            "",
+        ])
+
+    if scores:
+        lines.extend([
+            "## 六、评分对比",
+            "| 排名 | 投标单位 | 资信标 | 技术标 | 商务标 | 合计 |",
+            "| --- | --- | ---: | ---: | ---: | ---: |",
+        ])
+        for item in scores[:10]:
+            lines.append(
+                f"| {item.get('rank')} | {item.get('name')} | {item.get('credit_score')} | {item.get('technical_score')} | {item.get('commercial_score')} | {item.get('total_score')} |"
+            )
+        lines.extend([
+            "- 评分排名应与报价排名交叉查看，重点识别低价高分、低价低分、高价高分等不同竞争形态。",
+            "",
+        ])
+
+    if benchmarks:
+        near_benchmark = benchmarks[:5]
+        lines.extend([
+            "## 七、基准价对比",
+            "| 投标单位 | 报价 | 偏离基准价 | 偏离比例 | 是否低于基准价 |",
+            "| --- | ---: | ---: | ---: | --- |",
+        ])
+        for item in near_benchmark:
+            below = "是" if item.get("below_benchmark") else "否"
+            lines.append(
+                f"| {item.get('name')} | {item.get('price')} | {item.get('deviation_from_benchmark')} | {item.get('deviation_pct')}% | {below} |"
+            )
+        lines.extend([
+            "- 与基准价偏离越小，通常越接近评标价格中枢；偏离较大的报价需结合评分办法判断影响。",
+            "",
+        ])
+
+    lines.extend([
+        "## 八、综合判断与建议",
+        "- 当前数据已完成结构化解析，可支撑报价排名、离散度、梯队分布、评分对比和基准价偏离分析。",
+        "- 对低价单位，应重点复核报价组成、异常低价说明、关键设备或服务内容是否完整。",
+        "- 对高价单位，应关注其技术标、资信标得分是否足以支撑报价溢价。",
+        "- 后续可结合招标文件评分办法、废标条款和澄清记录，对排名变化原因进行更细化复盘。",
     ])
+    return "\n".join(lines)
 
 
 @router.post("/analyze/comprehensive")
@@ -852,7 +991,7 @@ async def start_comprehensive_analysis(
         filename = "bid_opening.xlsx"
         parsed = parse_opening_excel(content, filename)
         modules = request.modules or None
-        cached = await find_completed_opening(source_hash, modules, current_user["id"], require_ai=True)
+        cached = await _find_sufficient_completed_opening(source_hash, modules, current_user["id"], require_ai=True)
         if cached:
             return {"success": True, "task_id": cached["id"], "cached": True}
         analysis_data = compute_all_dimensions(parsed["bidders"], parsed["meta"], modules)
@@ -905,6 +1044,7 @@ async def start_comprehensive_analysis(
 
             stream_task = asyncio.create_task(_llm_stream())
             idle_ticks = 0
+            max_idle_ticks = _opening_idle_ticks(analysis_data)
             try:
                 while True:
                     if stream_task.done() and chunk_queue.empty():
@@ -918,7 +1058,7 @@ async def start_comprehensive_analysis(
                     except asyncio.TimeoutError:
                         idle_ticks += 1
                         logger.info("开标综合分析等待模型输出: task_id=%s idle_ticks=%s", task_id, idle_ticks)
-                        if idle_ticks < OPENING_MAX_IDLE_TICKS:
+                        if idle_ticks < max_idle_ticks:
                             continue
                         logger.warning("开标综合分析模型长时间无输出，使用兜底报告: task_id=%s partial_length=%s", task_id, len(result_text))
                         if not stream_task.done():
@@ -965,7 +1105,7 @@ async def start_comprehensive_analysis_upload(
             module_list = None
         if module_list is None and modules:
             module_list = [m.strip() for m in modules.split(",") if m.strip()]
-        cached = await find_completed_opening(source_hash, module_list, current_user["id"], require_ai=True)
+        cached = await _find_sufficient_completed_opening(source_hash, module_list, current_user["id"], require_ai=True)
         if cached:
             return {"success": True, "task_id": cached["id"], "cached": True}
 
@@ -1018,6 +1158,7 @@ async def start_comprehensive_analysis_upload(
 
             stream_task = asyncio.create_task(_llm_stream())
             idle_ticks = 0
+            max_idle_ticks = _opening_idle_ticks(analysis_data)
             try:
                 while True:
                     if stream_task.done() and chunk_queue.empty():
@@ -1031,7 +1172,7 @@ async def start_comprehensive_analysis_upload(
                     except asyncio.TimeoutError:
                         idle_ticks += 1
                         logger.info("开标综合分析等待模型输出: task_id=%s idle_ticks=%s", task_id, idle_ticks)
-                        if idle_ticks < OPENING_MAX_IDLE_TICKS:
+                        if idle_ticks < max_idle_ticks:
                             continue
                         logger.warning("开标综合分析模型长时间无输出，使用兜底报告: task_id=%s partial_length=%s", task_id, len(result_text))
                         if not stream_task.done():

@@ -16,6 +16,8 @@ from app.services.extract_service import _format_extract_result
 
 logger = logging.getLogger(__name__)
 
+STEP3_IDLE_TIMEOUT_SECONDS = 4.0
+STEP3_MAX_IDLE_TICKS = 8
 STEP4_IDLE_TIMEOUT_SECONDS = 4.0
 STEP4_MAX_IDLE_TICKS = 8
 
@@ -379,39 +381,46 @@ class SimulateService:
             idle_ticks = 0
             while True:
                 try:
-                    event = await asyncio.wait_for(chunk_queue.get(), timeout=5.0)
+                    event = await asyncio.wait_for(chunk_queue.get(), timeout=STEP3_IDLE_TIMEOUT_SECONDS)
                     idle_ticks = 0
                 except asyncio.TimeoutError:
                     idle_ticks += 1
-                    yield {"type": "llm_progress", "message": "AI 正在对比分析...", "phase": "generating", "percentage": 70}
-                    if idle_ticks < 12:
+                    logger.info("模拟编制 Step3 等待模型输出: task_id=%s idle_ticks=%s", task_id, idle_ticks)
+                    yield {"type": "llm_progress", "message": "AI 正在对比分析...", "phase": "generating", "percentage": 82}
+                    if idle_ticks < STEP3_MAX_IDLE_TICKS:
                         continue
+                    logger.warning("模拟编制 Step3 模型长时间无输出，启用兜底结果: task_id=%s partial_length=%s", task_id, len(result_holder["text"]))
                     result_holder["text"] = result_holder["text"].strip() or _fallback_simulate_result(3, task.step2_result)
                     await _save_step3_result()
                     _saved = True
+                    if not bg_task.done():
+                        bg_task.cancel()
+                        import contextlib
+                        with contextlib.suppress(asyncio.CancelledError):
+                            await bg_task
                     yield {"type": "content", "content": result_holder["text"]}
-                    yield {"type": "done", "data": {"summary": "对比分析完成"}, "phase": "completing", "percentage": 100}
+                    yield {"type": "done", "data": {"summary": "对比分析完成", "content": task.step3_result}, "phase": "completing", "percentage": 100}
                     break
 
                 if event["type"] == "content":
-                    yield {"type": "llm_progress", "message": "正在对比分析...", "phase": "generating", "percentage": 70}
+                    yield {"type": "llm_progress", "message": "正在对比分析...", "phase": "generating", "percentage": 82}
                     yield event
                 elif event["type"] == "llm_done":
                     await _save_step3_result()
                     _saved = True
-                    yield {"type": "done", "data": {"summary": "对比分析完成"}, "phase": "completing", "percentage": 100}
+                    yield {"type": "done", "data": {"summary": "对比分析完成", "content": task.step3_result}, "phase": "completing", "percentage": 100}
                     break
                 elif event["type"] == "llm_error":
                     if result_holder["text"].strip():
                         await _save_step3_result()
                         _saved = True
-                        yield {"type": "done", "data": {"summary": "对比分析完成"}, "phase": "completing", "percentage": 100}
+                        yield {"type": "done", "data": {"summary": "对比分析完成", "content": task.step3_result}, "phase": "completing", "percentage": 100}
                     else:
                         result_holder["text"] = _fallback_simulate_result(3, task.step2_result)
                         await _save_step3_result()
                         _saved = True
                         yield {"type": "content", "content": result_holder["text"]}
-                        yield {"type": "done", "data": {"summary": "对比分析完成"}, "phase": "completing", "percentage": 100}
+                        yield {"type": "done", "data": {"summary": "对比分析完成", "content": task.step3_result}, "phase": "completing", "percentage": 100}
                     break
         finally:
             if not _saved:

@@ -176,7 +176,7 @@ export default function StatisticsPage() {
       setAiPercentage(prev => {
         if (prev === null) return 5;
         if (prev >= 90) return prev;
-        return prev + Math.random() * 3 + 1;
+        return Math.min(prev + Math.random() * 3 + 1, 90);
       });
     }, 800);
     return () => clearInterval(timer);
@@ -270,6 +270,7 @@ export default function StatisticsPage() {
         const record = json.data;
         if (record.status === 'completed') {
           clearInterval(interval);
+          setAiPercentage(100);
           setAiContent(record.ai_analysis || 'AI 综合分析已完成，暂无报告内容');
           setAiStreaming(false);
           setAnalysisTaskId(null);
@@ -282,6 +283,7 @@ export default function StatisticsPage() {
           });
         } else if (record.status === 'error') {
           clearInterval(interval);
+          setAiPercentage(null);
           const errMsg = record.ai_analysis || '分析出错，请重试';
           setAiContent(errMsg);
           setAiStreaming(false);
@@ -1419,8 +1421,8 @@ export default function StatisticsPage() {
                   <TaskProgress
                     phases={statisticsPhases}
                     currentPhase={deriveStatisticsPhase(aiPercentage)}
-                    percentage={aiPercentage}
-                    message={`AI 正在分析中（${activeProvider}/${activeModel || 'default'}）...`}
+                    percentage={Math.min(aiPercentage ?? 0, 90)}
+                    message={`AI 正在分析中（${activeProvider}/${activeModel || 'default'}），大文件可能需要更长时间...`}
                     isActive={aiStreaming}
                     isDone={false}
                     showStop

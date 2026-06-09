@@ -136,10 +136,39 @@ def _parse_llm_json_response(response: str) -> tuple[str, list[dict[str, Any]]]:
     return json_str, [e for e in found_elements if isinstance(e, dict)]
 
 
-def _parse_markdown_elements_response(response: str) -> list[dict[str, str]]:
+def _selected_element_names(elements: list[str] | None) -> list[str]:
+    from app.services.prompt_builder import ELEMENT_NAMES
+    return [ELEMENT_NAMES[element] for element in elements or [] if element in ELEMENT_NAMES]
+
+
+def _split_by_selected_names(text: str, selected_names: list[str]) -> list[dict[str, str]]:
+    if not selected_names:
+        return []
+
+    name_pattern = "|".join(re.escape(name) for name in sorted(selected_names, key=len, reverse=True))
+    heading_pattern = re.compile(rf"^\s*(?:#{{1,6}}\s*)?(?:[-*]\s*)?(?:[一二三四五六七八九十\d]+[、.．:]\s*)?(?:\*\*)?({name_pattern})(?:\*\*)?\s*[:：]?\s*(.*)$", re.MULTILINE)
+    matches = list(heading_pattern.finditer(text))
+    if not matches:
+        return []
+
+    results = []
+    for index, match in enumerate(matches):
+        start = match.end()
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+        content = (match.group(2).strip() + "\n" + text[start:end].strip()).strip()
+        if content:
+            results.append({"name": match.group(1), "content": content})
+    return results
+
+
+def _parse_markdown_elements_response(response: str, selected_names: list[str] | None = None) -> list[dict[str, str]]:
     text = response.strip()
     if not text:
         return []
+
+    selected_split = _split_by_selected_names(text, selected_names or [])
+    if len(selected_split) > 1:
+        return selected_split
 
     element_aliases = {
         "项目基本信息": ["项目基本信息", "基本信息", "项目概况"],
@@ -194,21 +223,62 @@ def _parse_markdown_elements_response(response: str) -> list[dict[str, str]]:
 
     flush_current()
 
-    return [
+    elements = [
         {"name": name, "content": "\n\n---\n\n".join(parts)}
         for name, parts in grouped.items()
         if parts
     ]
-
-
-def _normalize_elements(elements: list[dict[str, Any]], fallback_text: str) -> list[dict[str, Any]]:
-    if len(elements) != 1:
+    if elements:
         return elements
 
-    element = elements[0]
+    sections = re.split(r"\n(?=#{1,6}\s+|[一二三四五六七八九十\d]+[、.．]\s+|\*\*[^*]{2,40}\*\*\s*$)", text)
+    fallback_elements: list[dict[str, str]] = []
+    for index, section in enumerate(sections, 1):
+        section = section.strip()
+        if not section:
+            continue
+        lines = section.splitlines()
+        title = re.sub(r"^(#{1,6}\s*|[一二三四五六七八九十\d]+[、.．]\s*|\*\*)", "", lines[0]).strip("*：: ")
+        content = "\n".join(lines[1:]).strip() or section
+        if len(content) >= 20:
+            fallback_elements.append({"name": title[:40] or f"分析结果{index}", "content": content})
+    return fallback_elements[:8]
+
+
+def _elements_from_plain_text(text: str, selected_names: list[str] | None = None) -> list[dict[str, str]]:
+    stripped = text.strip()
+    if not stripped:
+        return []
+    parsed = _parse_markdown_elements_response(stripped, selected_names)
+    if parsed:
+        return parsed
+    if selected_names:
+        return [{"name": selected_names[0], "content": stripped}]
+    return [{"name": "分析结果", "content": stripped}]
+
+
+def _normalize_elements(elements: list[dict[str, Any]], fallback_text: str, selected_names: list[str] | None = None) -> list[dict[str, Any]]:
+    if not elements:
+        return []
+
+    normalized = []
+    for element in elements:
+        name = str(element.get("name") or "").strip()
+        content = str(element.get("content") or "").strip()
+        if selected_names and name not in selected_names:
+            split_elements = _parse_markdown_elements_response(content or fallback_text, selected_names)
+            if split_elements:
+                normalized.extend(split_elements)
+                continue
+        normalized.append({"name": name or "分析结果", "content": content})
+
+    if len(normalized) != 1:
+        return normalized
+
+    element = normalized[0]
     content = str(element.get("content") or fallback_text or "")
-    split_elements = _parse_markdown_elements_response(content)
-    return split_elements if len(split_elements) > 1 else elements
+    split_elements = _parse_markdown_elements_response(content, selected_names)
+    return split_elements if len(split_elements) > 1 else normalized
 
 
 def extract_text_from_pdf(content: bytes, max_pages: int = 30) -> tuple[str, bool]:
@@ -436,7 +506,7 @@ class ExtractService:
 
             # LLM 流式调用 + 进度推送 + JSON 解析
             async for event in self._stream_llm_with_progress(
-                provider, messages, model, document_id, template_type, user_id, source_hash=source_hash, result_mode=mode
+                provider, messages, model, document_id, template_type, user_id, source_hash=source_hash, result_mode=mode, elements=elements
             ):
                 yield event
 
@@ -453,6 +523,7 @@ class ExtractService:
         user_id: Optional[str] = None,
         source_hash: Optional[str] = None,
         result_mode: Optional[str] = None,
+        elements: Optional[list[str]] = None,
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """LLM 流式调用 + 进度推送 + JSON 解析。"""
         import asyncio
@@ -464,6 +535,7 @@ class ExtractService:
         file_name = file_record.get("original_name", "") if file_record else ""
         effective_source_hash = source_hash or (file_record.get("file_hash") if file_record else None)
         effective_mode = result_mode or provider
+        selected_names = _selected_element_names(elements)
 
         resolved_model = model or self.llm.llm.MODEL_MAP.get(provider, "unknown")
         if "/" in resolved_model:
@@ -506,7 +578,7 @@ class ExtractService:
                     full_response = result_holder["text"]
                     try:
                         json_str, found_elements = _parse_llm_json_response(full_response)
-                        found_elements = _normalize_elements(found_elements, full_response)
+                        found_elements = _normalize_elements(found_elements, full_response, selected_names)
 
                         await add_extract({
                             "file_id": file_id,
@@ -531,9 +603,8 @@ class ExtractService:
                             "percentage": 100,
                         }
                     except json.JSONDecodeError:
-                        found_elements = _parse_markdown_elements_response(full_response)
-                        content = json.dumps({"elements": found_elements}, ensure_ascii=False) if found_elements else full_response
-                        status = "completed" if found_elements else "completed_json_error"
+                        found_elements = _elements_from_plain_text(full_response, selected_names)
+                        content = json.dumps({"elements": found_elements}, ensure_ascii=False)
                         await add_extract({
                             "file_id": file_id,
                             "file_name": file_name,
@@ -541,28 +612,18 @@ class ExtractService:
                             "mode": effective_mode,
                             "content": content,
                             "elements": found_elements,
-                            "status": status,
+                            "status": "completed",
                             "source_hash": effective_source_hash,
                         }, user_id=user_id)
                         _saved = True
-                        if found_elements:
-                            for element in found_elements:
-                                yield {"type": "element", "data": element, "phase": "extracting", "percentage": 90}
-                            yield {
-                                "type": "done",
-                                "data": {"summary": "文档分析完成", "elementCount": len(found_elements)},
-                                "phase": "extracting",
-                                "percentage": 100,
-                            }
-                        else:
-                            if full_response.strip():
-                                yield {"type": "element", "data": {"name": "分析结果", "content": full_response.strip()}, "phase": "extracting", "percentage": 90}
-                            yield {
-                                "type": "done",
-                                "data": {"summary": "文档分析完成，但JSON解析失败", "elementCount": 1 if full_response.strip() else 0},
-                                "phase": "extracting",
-                                "percentage": 100,
-                            }
+                        for element in found_elements:
+                            yield {"type": "element", "data": element, "phase": "extracting", "percentage": 90}
+                        yield {
+                            "type": "done",
+                            "data": {"summary": "文档分析完成", "elementCount": len(found_elements)},
+                            "phase": "extracting",
+                            "percentage": 100,
+                        }
                     break
                 elif event["type"] == "llm_error":
                     yield {"type": "error", "data": {"message": event["error"]}}
@@ -660,7 +721,7 @@ class ExtractService:
             yield {"type": "progress", "message": "AI 正在对比分析多份招标文件...", "phase": "analyzing", "percentage": 30}
 
             async for event in self._stream_llm_with_progress(
-                provider, messages, model, ",".join(file_ids), "batch", user_id
+                provider, messages, model, ",".join(file_ids), "batch", user_id, elements=elements
             ):
                 yield event
 
@@ -731,7 +792,7 @@ class ExtractService:
             yield {"type": "progress", "message": "AI 正在逐项比对门槛要求...", "phase": "analyzing", "percentage": 30}
 
             async for event in self._stream_llm_with_progress(
-                provider, messages, model, file_id, "threshold", user_id
+                provider, messages, model, file_id, "threshold", user_id, elements=["qualification", "experience", "personnel"]
             ):
                 yield event
 

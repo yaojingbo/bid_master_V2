@@ -17,9 +17,9 @@ export function ResizableSplit({
   left,
   right,
   storageKey,
-  defaultLeftWidth = 480,
-  minLeftWidth = 360,
-  maxLeftWidth = 880,
+  defaultLeftWidth = 520,
+  minLeftWidth = 300,
+  maxLeftWidth = 960,
   className,
 }: ResizableSplitProps) {
   const [leftWidth, setLeftWidth] = useState(defaultLeftWidth);

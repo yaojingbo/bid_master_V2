@@ -15,6 +15,7 @@ import {
   Terminal,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { BidMasterLogo } from '@/components/layout/BidMasterLogo';
 import { useAuthStore } from '@/stores/auth-store';
 
 const navItems = [
@@ -36,8 +37,8 @@ export function Sidebar() {
   return (
     <header className="sticky top-0 z-40 border-b border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">
       <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-8">
-        <Link href="/" className="flex min-w-44 flex-col leading-none">
-          <span className="text-[22px] font-bold tracking-tight text-primary">Bid Master</span>
+        <Link href="/" className="flex min-w-44 items-center leading-none">
+          <BidMasterLogo markClassName="h-9 w-9 rounded-xl" />
         </Link>
 
         <nav className="flex items-center gap-4">
