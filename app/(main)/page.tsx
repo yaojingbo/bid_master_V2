@@ -42,7 +42,7 @@ const features = [
     number: '4',
     title: '系统工具',
     desc: '统一管理 AI 模型、数据资产和系统日志，让招投标工作流更完整',
-    tags: ['AI设置', '数据管理', '系统日志', '模型配置'],
+    tags: ['AI设置', '文件管理', '系统日志', '模型配置'],
   },
 ];
 
@@ -60,8 +60,10 @@ export default function HomePage() {
         </h1>
 
         <p className="mt-8 text-[26px] font-semibold leading-tight tracking-tight text-foreground">
-          <span className="text-primary">更快</span>地提取 · <span className="text-primary">更稳</span>地编制 ·{' '}
-          <span className="text-primary">更清晰</span>地分析 · <span className="text-primary">更强</span>的工具
+          <span className="text-primary">更快</span>地提取 ·{' '}
+          <span className="text-primary">更稳</span>地编制 ·{' '}
+          <span className="text-primary">更清晰</span>地分析 ·{' '}
+          <span className="text-primary">更强</span>的工具
         </p>
 
         <p className="mt-5 text-lg text-muted-foreground">AI 时代的招投标工作流，一站备齐</p>

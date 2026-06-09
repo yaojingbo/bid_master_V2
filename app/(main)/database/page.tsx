@@ -1,27 +1,35 @@
 'use client';
 
 import { useSearchParams } from 'next/navigation';
-import { useState, useEffect, useCallback } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
+  Archive,
+  ArrowLeft,
+  BarChart3,
+  Calendar,
+  Download,
+  Eye,
+  FileSearch,
+  FileText,
   FileUp,
   FlaskConical,
-  BarChart3,
-  FileSearch,
-  Eye,
-  Download,
+  Layers3,
+  Search,
   Trash2,
   X,
-  Archive,
 } from 'lucide-react';
 import JSZip from 'jszip';
 import { cn } from '@/lib/utils';
 import { WorkbenchLayout } from '@/components/layout/WorkbenchLayout';
 import { PageHeader } from '@/components/layout/PageHeader';
-import { TabNavigation } from '@/components/ui/TabNavigation';
+import { MarkdownPreview } from '@/components/ui/MarkdownPreview';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { authFetch } from '@/lib/auth-fetch';
 import {
   getStats,
   listFiles,
   downloadFile as apiDownloadFile,
+  batchDownloadFiles,
   downloadBlob,
   previewFileUrl,
   deleteFile as apiDeleteFile,
@@ -31,7 +39,6 @@ import {
   deleteOpening as apiDeleteOpening,
   listExtracts,
   deleteExtract as apiDeleteExtract,
-  batchDownloadFiles,
 } from '@/lib/data-api';
 import { useFileStore } from '@/stores/file-store';
 import type {
@@ -42,7 +49,49 @@ import type {
   ExtractResultRecord,
 } from '@/lib/data-api';
 
-// --- 工具函数 ---
+type DataTab = 'files' | 'extracts' | 'simulates' | 'openings';
+type DetailRecord =
+  | { type: 'files'; record: FileRecord }
+  | { type: 'extracts'; record: ExtractResultRecord }
+  | { type: 'simulates'; record: SimulateTaskRecord }
+  | { type: 'openings'; record: OpeningResultRecord };
+
+const tabs: { key: DataTab; label: string; desc: string; icon: React.ElementType }[] = [
+  { key: 'files', label: '上传文件', desc: '用户上传的原始文件', icon: FileUp },
+  { key: 'extracts', label: '要素提取', desc: '结构化提取输出', icon: FileSearch },
+  { key: 'simulates', label: '模拟编制', desc: '模拟标书与过程结果', icon: FlaskConical },
+  { key: 'openings', label: '开标分析', desc: '报价统计与分析报告', icon: BarChart3 },
+];
+
+const statusMap: Record<string, { color: string; text: string }> = {
+  pending: { color: 'bg-warning/10 text-warning', text: '待处理' },
+  step1_convert: { color: 'bg-primary/10 text-primary', text: 'PDF 转换' },
+  step2_extract: { color: 'bg-primary/10 text-primary', text: '要素提取' },
+  step3_compare: { color: 'bg-primary/10 text-primary', text: '对比分析' },
+  step4_simulate: { color: 'bg-primary/10 text-primary', text: '模拟编制' },
+  completed: { color: 'bg-success/10 text-success', text: '已完成' },
+  failed: { color: 'bg-destructive/10 text-destructive', text: '失败' },
+};
+
+const fileTypeColor: Record<string, string> = {
+  pdf: 'bg-destructive/10 text-destructive',
+  excel: 'bg-success/10 text-success',
+  xlsx: 'bg-success/10 text-success',
+  xls: 'bg-success/10 text-success',
+  csv: 'bg-success/10 text-success',
+  markdown: 'bg-primary/10 text-primary',
+  md: 'bg-primary/10 text-primary',
+  word: 'bg-secondary/10 text-secondary',
+  doc: 'bg-secondary/10 text-secondary',
+  docx: 'bg-secondary/10 text-secondary',
+};
+
+const emptyStats: DataStats = {
+  files: 0,
+  simulate_tasks: 0,
+  opening_results: 0,
+  extract_results: 0,
+};
 
 const formatSize = (bytes: number): string => {
   if (bytes < 1024) return `${bytes} B`;
@@ -55,236 +104,156 @@ const formatDate = (iso: string | null): string => {
   return iso.replace('T', ' ').slice(0, 19);
 };
 
-const statusMap: Record<string, { color: string; text: string }> = {
-  pending: { color: 'bg-warning/10 text-warning', text: '待处理' },
-  step1_convert: { color: 'bg-primary/10 text-primary', text: 'Step 1 转换' },
-  step2_extract: { color: 'bg-primary/10 text-primary', text: 'Step 2 提取' },
-  step3_compare: { color: 'bg-primary/10 text-primary', text: 'Step 3 对比' },
-  step4_simulate: { color: 'bg-primary/10 text-primary', text: 'Step 4 编制' },
-  completed: { color: 'bg-success/10 text-success', text: '已完成' },
-  failed: { color: 'bg-destructive/10 text-destructive', text: '失败' },
+const compactText = (text: string, fallback = '暂无可预览内容') => {
+  const normalized = text
+    .replace(/[#>*_`|\-]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!normalized) return fallback;
+  return normalized.length > 180 ? `${normalized.slice(0, 180)}...` : normalized;
 };
 
-const fileTypeColor: Record<string, string> = {
-  pdf: 'bg-destructive/10 text-destructive',
-  excel: 'bg-success/10 text-success',
-  csv: 'bg-success/10 text-success',
-  markdown: 'bg-primary/10 text-primary',
-  word: 'bg-secondary/10 text-secondary',
-};
-
-// --- Markdown 内容生成器（复用详情弹窗逻辑）---
+const getFileTitle = (file: FileRecord) => file.original_name || file.id;
+const getExtractTitle = (result: ExtractResultRecord) => result.name || `提取结果 ${result.id}`;
+const getSimulateTitle = (task: SimulateTaskRecord) => task.name || `模拟任务 ${task.task_id}`;
+const getOpeningTitle = (result: OpeningResultRecord) => result.name || `开标分析 ${result.id}`;
 
 function generateSimulateMarkdown(task: SimulateTaskRecord): string {
   const lines = Object.entries(task.step_results || {}).map(([key, val]) => {
     const label =
       key === 'step1'
-        ? 'Step 1: PDF转换'
+        ? 'Step 1：PDF转换'
         : key === 'step2'
-          ? 'Step 2: 要素提取'
+          ? 'Step 2：要素提取'
           : key === 'step3'
-            ? 'Step 3: 对比分析'
-            : 'Step 4: 模拟编制';
+            ? 'Step 3：对比分析'
+            : 'Step 4：模拟编制';
     const content = typeof val === 'string' ? val : JSON.stringify(val, null, 2);
     return `## ${label}\n\n${content}`;
   });
-  return `# 模拟任务 ${task.task_id}\n\n${lines.join('\n\n')}`;
+  return `# ${getSimulateTitle(task)}\n\n${lines.join('\n\n')}`;
 }
 
 function generateOpeningMarkdown(result: OpeningResultRecord): string {
   const meta = result.meta || {};
-  const stats = result.bid_stats || ({} as any);
+  const stats = result.bid_stats || ({} as OpeningResultRecord['bid_stats']);
   const lines = [
-    `# 开标分析报告`,
-    ``,
-    `- 项目名称: ${(meta as any).project_name || result.id}`,
-    `- 项目编号: ${(meta as any).bid_number || '-'}`,
-    `- 投标人数量: ${result.bidder_count || '?'}`,
-    `- 分析时间: ${result.created_at || '-'}`,
+    '# 开标分析报告',
+    '',
+    `- 项目名称：${String(meta.project_name || result.name || result.id)}`,
+    `- 项目编号：${String(meta.bid_number || '-')}`,
+    `- 投标人数量：${result.bidder_count || 0}`,
+    `- 分析时间：${result.created_at || '-'}`,
   ];
-  if ((meta as any).max_price)
-    lines.push(`- 最高限价: ¥${(meta as any).max_price.toLocaleString()}`);
-  if ((meta as any).benchmark_price)
-    lines.push(`- 评标基准价: ¥${(meta as any).benchmark_price.toLocaleString()}`);
 
   if (result.bid_ranking?.length) {
-    lines.push(``, `## 投标价排名`, ``);
-    lines.push(`| 排名 | 投标人 | 报价(万元) |`, '|------|--------|----------|');
-    for (const r of result.bid_ranking) {
-      lines.push(`| ${r.rank} | ${r.name} | ¥${r.price.toLocaleString()} |`);
+    lines.push('', '## 投标价排名', '', '| 排名 | 投标人 | 报价 |', '| --- | --- | --- |');
+    for (const item of result.bid_ranking) {
+      lines.push(`| ${item.rank} | ${item.name} | ${item.price.toLocaleString()} |`);
     }
   }
 
   if (stats.mean !== undefined) {
-    lines.push(``, `## 统计指标`, ``);
-    lines.push(`| 指标 | 值 |`, '|------|-----|');
-    lines.push(`| 均值 | ¥${stats.mean.toLocaleString()} |`);
-    const sd = stats.std_dev ?? stats.std;
-    if (sd !== undefined) lines.push(`| 标准差 | ${sd} |`);
-    if (stats.cv !== undefined)
-      lines.push(`| 离散系数 | ${stats.cv}% (${stats.cv_level || '-'}) |`);
-    lines.push(`| 最小值 | ¥${stats.min?.toLocaleString()} |`);
-    lines.push(`| 最大值 | ¥${stats.max?.toLocaleString()} |`);
-    if (stats.range !== undefined) lines.push(`| 极差 | ¥${stats.range.toLocaleString()} |`);
+    const std = stats.std_dev ?? stats.std;
+    lines.push('', '## 统计指标', '', '| 指标 | 值 |', '| --- | --- |');
+    lines.push(`| 均值 | ${stats.mean.toLocaleString()} |`);
+    if (std !== undefined) lines.push(`| 标准差 | ${std} |`);
+    lines.push(`| 离散系数 | ${stats.cv}% |`);
+    lines.push(`| 最小值 | ${stats.min?.toLocaleString()} |`);
+    lines.push(`| 最大值 | ${stats.max?.toLocaleString()} |`);
+    lines.push(`| 极差 | ${stats.range?.toLocaleString()} |`);
   }
 
-  const discount = (result as any).discount_results;
-  if (discount?.length) {
-    lines.push(``, `## 降价分析`, ``);
-    for (const r of discount) {
-      lines.push(`- ${r.name}: 降幅 ${r.discount_pct}% (${r.strategy})`);
-    }
-  }
-
-  if ((result as any).ai_analysis) {
-    lines.push(``, `## AI 综合分析`, ``, (result as any).ai_analysis);
+  if (result.ai_analysis) {
+    lines.push('', '## AI 综合分析', '', result.ai_analysis);
   }
 
   return lines.join('\n');
 }
 
-function generateExtractMarkdown(result: ExtractResultRecord): string {
-  return result.content || '';
-}
+const getRecordMarkdown = (detail: DetailRecord | null) => {
+  if (!detail) return '';
+  if (detail.type === 'extracts') return detail.record.content || '';
+  if (detail.type === 'simulates') return generateSimulateMarkdown(detail.record);
+  if (detail.type === 'openings') return generateOpeningMarkdown(detail.record);
+  return `# ${detail.record.original_name}\n\n- 文件类型：${detail.record.type}\n- 文件大小：${formatSize(detail.record.size)}\n- 上传时间：${formatDate(detail.record.created_at)}\n\n原始上传文件请使用预览或下载查看完整内容。`;
+};
 
-// --- 主组件 ---
+const getDetailTitle = (detail: DetailRecord) => {
+  if (detail.type === 'files') return getFileTitle(detail.record);
+  if (detail.type === 'extracts') return getExtractTitle(detail.record);
+  if (detail.type === 'simulates') return getSimulateTitle(detail.record);
+  return getOpeningTitle(detail.record);
+};
 
 export default function DatabasePage() {
   const searchParams = useSearchParams();
-  const initialTab = searchParams.get('tab') || 'files';
-  const [activeTab, setActiveTab] = useState(initialTab);
-  const loadedTabs = useState(new Set([initialTab]))[0];
-
-  // 统计
-  const [stats, setStats] = useState<DataStats>({
-    files: 0,
-    simulate_tasks: 0,
-    opening_results: 0,
-    extract_results: 0,
-  });
-
-  // 文件
-  const [filesData, setFilesData] = useState<FileRecord[]>([]);
-  const [filesLoading, setFilesLoading] = useState(false);
-  const [filesTotal, setFilesTotal] = useState(0);
-  const [filesPage, setFilesPage] = useState(1);
-  const [fileTypeFilter, setFileTypeFilter] = useState<string | undefined>();
-  const [fileDetail, setFileDetail] = useState<FileRecord | null>(null);
-
-  // 模拟任务
-  const [simulatesData, setSimulatesData] = useState<SimulateTaskRecord[]>([]);
-  const [simulatesLoading, setSimulatesLoading] = useState(false);
-  const [simulatesTotal, setSimulatesTotal] = useState(0);
-  const [simulatesPage, setSimulatesPage] = useState(1);
-  const [statusFilter, setStatusFilter] = useState<string | undefined>();
-  const [simulateDetail, setSimulateDetail] = useState<SimulateTaskRecord | null>(null);
-
-  // 开标结果
-  const [openingsData, setOpeningsData] = useState<OpeningResultRecord[]>([]);
-  const [openingsLoading, setOpeningsLoading] = useState(false);
-  const [openingsTotal, setOpeningsTotal] = useState(0);
-  const [openingsPage, setOpeningsPage] = useState(1);
-  const [openingDetail, setOpeningDetail] = useState<OpeningResultRecord | null>(null);
-
-  // 提取结果
-  const [extractsData, setExtractsData] = useState<ExtractResultRecord[]>([]);
-  const [extractsLoading, setExtractsLoading] = useState(false);
-  const [extractsTotal, setExtractsTotal] = useState(0);
-  const [extractsPage, setExtractsPage] = useState(1);
-  const [extractDetail, setExtractDetail] = useState<ExtractResultRecord | null>(null);
-
-  // 确认弹窗
+  const initialTab = (searchParams.get('tab') as DataTab | null) || 'files';
+  const [activeTab, setActiveTab] = useState<DataTab>(
+    tabs.some(t => t.key === initialTab) ? initialTab : 'files'
+  );
+  const [loadedTabs, setLoadedTabs] = useState<Set<DataTab>>(new Set([initialTab]));
+  const [stats, setStats] = useState<DataStats>(emptyStats);
+  const [searchKeyword, setSearchKeyword] = useState('');
+  const [fileTypeFilter, setFileTypeFilter] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
+  const [timeFilter, setTimeFilter] = useState('all');
+  const [markdownMode, setMarkdownMode] = useState(false);
+  const [filePreviewText, setFilePreviewText] = useState<Record<string, string>>({});
+  const [filePreviewLoadingId, setFilePreviewLoadingId] = useState<string | null>(null);
+  const [quickPreview, setQuickPreview] = useState<DetailRecord | null>(null);
+  const [detail, setDetail] = useState<DetailRecord | null>(null);
   const [confirmAction, setConfirmAction] = useState<{
     title: string;
     message: string;
     onConfirm: () => void;
   } | null>(null);
-
-  // 下载中状态
-  const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [downloadError, setDownloadError] = useState<string | null>(null);
+  const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [batchDownloading, setBatchDownloading] = useState(false);
-
-  // 多选状态
   const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
+  const [selectedExtracts, setSelectedExtracts] = useState<Set<string>>(new Set());
   const [selectedSimulates, setSelectedSimulates] = useState<Set<string>>(new Set());
   const [selectedOpenings, setSelectedOpenings] = useState<Set<string>>(new Set());
-  const [selectedExtracts, setSelectedExtracts] = useState<Set<string>>(new Set());
 
-  // --- 数据加载 ---
+  const [filesData, setFilesData] = useState<FileRecord[]>([]);
+  const [filesLoading, setFilesLoading] = useState(false);
+  const [simulatesData, setSimulatesData] = useState<SimulateTaskRecord[]>([]);
+  const [simulatesLoading, setSimulatesLoading] = useState(false);
+  const [openingsData, setOpeningsData] = useState<OpeningResultRecord[]>([]);
+  const [openingsLoading, setOpeningsLoading] = useState(false);
+  const [extractsData, setExtractsData] = useState<ExtractResultRecord[]>([]);
+  const [extractsLoading, setExtractsLoading] = useState(false);
 
   const loadStats = useCallback(async () => {
     try {
-      const s = await getStats();
-      setStats(s);
+      setStats(await getStats());
     } catch {
-      /* 忽略 */
+      setStats(emptyStats);
     }
   }, []);
 
-  const fetchFiles = useCallback(
-    async (page = 1) => {
-      setFilesLoading(true);
-      try {
-        const res = await listFiles({
-          page,
-          page_size: 20,
-          file_type: fileTypeFilter,
-        });
-        setFilesData(res.files);
-        setFilesTotal(res.total);
-        setFilesPage(page);
-      } catch (err) {
-        console.error('加载文件失败:', err);
-      } finally {
-        setFilesLoading(false);
-      }
-    },
-    [fileTypeFilter]
-  );
-
-  const fetchSimulates = useCallback(
-    async (page = 1) => {
-      setSimulatesLoading(true);
-      try {
-        const res = await listSimulates({
-          page,
-          page_size: 20,
-          status: statusFilter,
-        });
-        setSimulatesData(res.tasks);
-        setSimulatesTotal(res.total);
-        setSimulatesPage(page);
-      } catch (err) {
-        console.error('加载模拟任务失败:', err);
-      } finally {
-        setSimulatesLoading(false);
-      }
-    },
-    [statusFilter]
-  );
-
-  const fetchOpenings = useCallback(async (page = 1) => {
-    setOpeningsLoading(true);
+  const fetchFiles = useCallback(async () => {
+    setFilesLoading(true);
     try {
-      const res = await listOpenings({ page, page_size: 20 });
-      setOpeningsData(res.results);
-      setOpeningsTotal(res.total);
-      setOpeningsPage(page);
+      const res = await listFiles({
+        page: 1,
+        page_size: 100,
+        file_type: fileTypeFilter || undefined,
+      });
+      setFilesData(res.files);
     } catch (err) {
-      console.error('加载开标结果失败:', err);
+      console.error('加载文件失败:', err);
     } finally {
-      setOpeningsLoading(false);
+      setFilesLoading(false);
     }
-  }, []);
+  }, [fileTypeFilter]);
 
-  const fetchExtracts = useCallback(async (page = 1) => {
+  const fetchExtracts = useCallback(async () => {
     setExtractsLoading(true);
     try {
-      const res = await listExtracts({ page, page_size: 20 });
+      const res = await listExtracts({ page: 1, page_size: 100 });
       setExtractsData(res.results);
-      setExtractsTotal(res.total);
-      setExtractsPage(page);
     } catch (err) {
       console.error('加载提取结果失败:', err);
     } finally {
@@ -292,25 +261,128 @@ export default function DatabasePage() {
     }
   }, []);
 
-  // 初始化加载
+  const fetchSimulates = useCallback(async () => {
+    setSimulatesLoading(true);
+    try {
+      const res = await listSimulates({
+        page: 1,
+        page_size: 100,
+        status: statusFilter || undefined,
+      });
+      setSimulatesData(res.tasks);
+    } catch (err) {
+      console.error('加载模拟任务失败:', err);
+    } finally {
+      setSimulatesLoading(false);
+    }
+  }, [statusFilter]);
+
+  const fetchOpenings = useCallback(async () => {
+    setOpeningsLoading(true);
+    try {
+      const res = await listOpenings({ page: 1, page_size: 100 });
+      setOpeningsData(res.results);
+    } catch (err) {
+      console.error('加载开标结果失败:', err);
+    } finally {
+      setOpeningsLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     loadStats();
-    if (initialTab === 'files') fetchFiles();
-    else if (initialTab === 'simulates') fetchSimulates();
-    else if (initialTab === 'openings') fetchOpenings();
-    else if (initialTab === 'extracts') fetchExtracts();
-  }, [loadStats, fetchFiles, fetchSimulates, fetchOpenings, fetchExtracts, initialTab]);
-
-  // 筛选变化时重新加载
-  useEffect(() => {
-    fetchFiles(1);
-  }, [fileTypeFilter, fetchFiles]);
+    if (activeTab === 'files') fetchFiles();
+    if (activeTab === 'extracts') fetchExtracts();
+    if (activeTab === 'simulates') fetchSimulates();
+    if (activeTab === 'openings') fetchOpenings();
+  }, [activeTab, fetchExtracts, fetchFiles, fetchOpenings, fetchSimulates, loadStats]);
 
   useEffect(() => {
-    if (loadedTabs.has('simulates')) fetchSimulates(1);
-  }, [statusFilter, fetchSimulates, loadedTabs]);
+    if (activeTab === 'files') fetchFiles();
+  }, [activeTab, fetchFiles, fileTypeFilter]);
 
-  // --- 下载处理 ---
+  useEffect(() => {
+    if (activeTab === 'simulates') fetchSimulates();
+  }, [activeTab, fetchSimulates, statusFilter]);
+
+  const handleTabChange = (key: DataTab) => {
+    setActiveTab(key);
+    setSearchKeyword('');
+    setMarkdownMode(false);
+    setLoadedTabs(prev => new Set(prev).add(key));
+  };
+
+  const matchesKeyword = useCallback(
+    (title: string, content = '') => {
+      const keyword = searchKeyword.trim().toLowerCase();
+      if (!keyword) return true;
+      return `${title} ${content}`.toLowerCase().includes(keyword);
+    },
+    [searchKeyword]
+  );
+
+  const matchesTime = useCallback(
+    (createdAt: string | null) => {
+      if (timeFilter === 'all') return true;
+      if (!createdAt) return false;
+      const created = new Date(createdAt).getTime();
+      const now = Date.now();
+      const days = timeFilter === '7d' ? 7 : 30;
+      return now - created <= days * 24 * 60 * 60 * 1000;
+    },
+    [timeFilter]
+  );
+
+  const filteredFiles = useMemo(
+    () =>
+      filesData.filter(file => matchesKeyword(getFileTitle(file)) && matchesTime(file.created_at)),
+    [filesData, matchesKeyword, matchesTime]
+  );
+
+  const filteredExtracts = useMemo(
+    () =>
+      extractsData.filter(
+        result =>
+          matchesKeyword(getExtractTitle(result), result.content) && matchesTime(result.created_at)
+      ),
+    [extractsData, matchesKeyword, matchesTime]
+  );
+
+  const filteredSimulates = useMemo(
+    () =>
+      simulatesData.filter(task => {
+        const content = generateSimulateMarkdown(task);
+        return matchesKeyword(getSimulateTitle(task), content) && matchesTime(task.created_at);
+      }),
+    [matchesKeyword, matchesTime, simulatesData]
+  );
+
+  const filteredOpenings = useMemo(
+    () =>
+      openingsData.filter(result => {
+        const content = generateOpeningMarkdown(result);
+        return matchesKeyword(getOpeningTitle(result), content) && matchesTime(result.created_at);
+      }),
+    [matchesKeyword, matchesTime, openingsData]
+  );
+
+  const currentCount =
+    activeTab === 'files'
+      ? filteredFiles.length
+      : activeTab === 'extracts'
+        ? filteredExtracts.length
+        : activeTab === 'simulates'
+          ? filteredSimulates.length
+          : filteredOpenings.length;
+
+  const isLoading =
+    activeTab === 'files'
+      ? filesLoading
+      : activeTab === 'extracts'
+        ? extractsLoading
+        : activeTab === 'simulates'
+          ? simulatesLoading
+          : openingsLoading;
 
   const handleDownloadFile = async (file: FileRecord) => {
     setDownloadingId(file.id);
@@ -319,76 +391,27 @@ export default function DatabasePage() {
       const blob = await apiDownloadFile(file.id);
       downloadBlob(blob, file.original_name);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : '下载失败';
-      setDownloadError(msg);
-      console.error('下载文件失败:', err);
+      setDownloadError(err instanceof Error ? err.message : '下载失败');
     } finally {
       setDownloadingId(null);
     }
   };
 
-  // --- 删除处理 ---
-
-  const handleDeleteFile = async (id: string) => {
-    try {
-      await apiDeleteFile(id);
-      useFileStore.getState().removeFile(id);
-      fetchFiles(filesPage);
-      loadStats();
-    } catch (err) {
-      console.error('删除文件失败:', err);
-    }
+  const toggleFileSelect = (fileId: string) => {
+    setSelectedFiles(prev => {
+      const next = new Set(prev);
+      if (next.has(fileId)) next.delete(fileId);
+      else next.add(fileId);
+      return next;
+    });
   };
 
-  const handleDeleteSimulate = async (taskId: string) => {
-    try {
-      await apiDeleteSimulate(taskId);
-      fetchSimulates(simulatesPage);
-      loadStats();
-    } catch (err) {
-      console.error('删除模拟任务失败:', err);
-    }
-  };
-
-  const handleDeleteOpening = async (taskId: string) => {
-    try {
-      await apiDeleteOpening(taskId);
-      fetchOpenings(openingsPage);
-      loadStats();
-    } catch (err) {
-      console.error('删除开标结果失败:', err);
-    }
-  };
-
-  const handleDeleteExtract = async (resultId: string) => {
-    try {
-      await apiDeleteExtract(resultId);
-      fetchExtracts(extractsPage);
-      loadStats();
-    } catch (err) {
-      console.error('删除提取结果失败:', err);
-    }
-  };
-
-  // --- 批量操作处理 ---
-
-  const handleBatchDeleteFiles = async () => {
-    if (selectedFiles.size === 0) return;
-    setConfirmAction({
-      title: '批量删除文件',
-      message: `确定删除选中的 ${selectedFiles.size} 个文件？`,
-      onConfirm: async () => {
-        for (const id of selectedFiles) {
-          try {
-            await apiDeleteFile(id);
-          } catch {
-            /* ignore individual failures */
-          }
-        }
-        setSelectedFiles(new Set());
-        fetchFiles(filesPage);
-        loadStats();
-      },
+  const toggleAllFilteredFiles = () => {
+    setSelectedFiles(prev => {
+      if (filteredFiles.length > 0 && filteredFiles.every(file => prev.has(file.id))) {
+        return new Set();
+      }
+      return new Set(filteredFiles.map(file => file.id));
     });
   };
 
@@ -397,963 +420,941 @@ export default function DatabasePage() {
     setBatchDownloading(true);
     setDownloadError(null);
     try {
-      const ids = Array.from(selectedFiles);
-      const blob = await batchDownloadFiles(ids);
-      downloadBlob(blob, 'batch_download.zip');
+      const blob = await batchDownloadFiles(Array.from(selectedFiles));
+      downloadBlob(blob, 'files_batch_download.zip');
       setSelectedFiles(new Set());
     } catch (err) {
-      const msg = err instanceof Error ? err.message : '批量下载失败';
-      setDownloadError(msg);
-    } finally {
-      setBatchDownloading(false);
-    }
-  };
-
-  const handleBatchDeleteSimulates = async () => {
-    if (selectedSimulates.size === 0) return;
-    setConfirmAction({
-      title: '批量删除任务',
-      message: `确定删除选中的 ${selectedSimulates.size} 个模拟任务？`,
-      onConfirm: async () => {
-        for (const id of selectedSimulates) {
-          try {
-            await apiDeleteSimulate(id);
-          } catch {
-            /* ignore individual failures */
-          }
-        }
-        setSelectedSimulates(new Set());
-        fetchSimulates(simulatesPage);
-        loadStats();
-      },
-    });
-  };
-
-  const handleBatchDownloadSimulates = async () => {
-    if (selectedSimulates.size === 0) return;
-    setBatchDownloading(true);
-    setDownloadError(null);
-    try {
-      const zip = new JSZip();
-      const selected = simulatesData.filter(t => selectedSimulates.has(t.task_id));
-      for (const task of selected) {
-        zip.file(`simulate_${task.task_id}.md`, generateSimulateMarkdown(task));
-      }
-      const blob = await zip.generateAsync({ type: 'blob' });
-      downloadBlob(blob, 'simulate_reports.zip');
-      setSelectedSimulates(new Set());
-    } catch (err) {
       setDownloadError(err instanceof Error ? err.message : '批量下载失败');
     } finally {
       setBatchDownloading(false);
     }
   };
 
-  const handleBatchDeleteOpenings = async () => {
-    if (selectedOpenings.size === 0) return;
-    setConfirmAction({
-      title: '批量删除开标结果',
-      message: `确定删除选中的 ${selectedOpenings.size} 个开标结果？`,
-      onConfirm: async () => {
-        for (const id of selectedOpenings) {
-          try {
-            await apiDeleteOpening(id);
-          } catch {
-            /* ignore individual failures */
-          }
-        }
-        setSelectedOpenings(new Set());
-        fetchOpenings(openingsPage);
-        loadStats();
-      },
-    });
+  const handleBatchDeleteFiles = async () => {
+    if (selectedFiles.size === 0) return;
+    for (const fileId of selectedFiles) {
+      try {
+        await apiDeleteFile(fileId);
+        useFileStore.getState().removeFile(fileId);
+      } catch (err) {
+        console.error('批量删除文件失败:', err);
+      }
+    }
+    setSelectedFiles(new Set());
+    await fetchFiles();
+    await loadStats();
   };
 
-  const handleBatchDownloadOpenings = async () => {
-    if (selectedOpenings.size === 0) return;
-    setBatchDownloading(true);
-    setDownloadError(null);
-    try {
-      const zip = new JSZip();
-      const selected = openingsData.filter(o => selectedOpenings.has(o.id));
-      for (const r of selected) {
-        zip.file(`opening_${r.id}.md`, generateOpeningMarkdown(r));
-      }
-      const blob = await zip.generateAsync({ type: 'blob' });
-      downloadBlob(blob, 'opening_reports.zip');
-      setSelectedOpenings(new Set());
-    } catch (err) {
-      setDownloadError(err instanceof Error ? err.message : '批量下载失败');
-    } finally {
-      setBatchDownloading(false);
+  const getSelectionState = () => {
+    if (activeTab === 'files') return selectedFiles;
+    if (activeTab === 'extracts') return selectedExtracts;
+    if (activeTab === 'simulates') return selectedSimulates;
+    return selectedOpenings;
+  };
+
+  const toggleResultSelect = (id: string) => {
+    const update = (prev: Set<string>) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    };
+    if (activeTab === 'extracts') setSelectedExtracts(update);
+    if (activeTab === 'simulates') setSelectedSimulates(update);
+    if (activeTab === 'openings') setSelectedOpenings(update);
+  };
+
+  const toggleAllCurrentResults = () => {
+    if (activeTab === 'files') {
+      toggleAllFilteredFiles();
+      return;
+    }
+    if (activeTab === 'extracts') {
+      setSelectedExtracts(prev =>
+        filteredExtracts.length > 0 && filteredExtracts.every(item => prev.has(item.id))
+          ? new Set()
+          : new Set(filteredExtracts.map(item => item.id))
+      );
+    }
+    if (activeTab === 'simulates') {
+      setSelectedSimulates(prev =>
+        filteredSimulates.length > 0 && filteredSimulates.every(item => prev.has(item.task_id))
+          ? new Set()
+          : new Set(filteredSimulates.map(item => item.task_id))
+      );
+    }
+    if (activeTab === 'openings') {
+      setSelectedOpenings(prev =>
+        filteredOpenings.length > 0 && filteredOpenings.every(item => prev.has(item.id))
+          ? new Set()
+          : new Set(filteredOpenings.map(item => item.id))
+      );
     }
   };
 
-  const handleBatchDeleteExtracts = async () => {
-    if (selectedExtracts.size === 0) return;
-    setConfirmAction({
-      title: '批量删除提取结果',
-      message: `确定删除选中的 ${selectedExtracts.size} 个提取结果？`,
-      onConfirm: async () => {
-        for (const id of selectedExtracts) {
-          try {
-            await apiDeleteExtract(id);
-          } catch {
-            /* ignore individual failures */
-          }
-        }
-        setSelectedExtracts(new Set());
-        fetchExtracts(extractsPage);
-        loadStats();
-      },
-    });
+  const currentResultsAllSelected = () => {
+    if (activeTab === 'files') {
+      return filteredFiles.length > 0 && filteredFiles.every(item => selectedFiles.has(item.id));
+    }
+    if (activeTab === 'extracts') {
+      return filteredExtracts.length > 0 && filteredExtracts.every(item => selectedExtracts.has(item.id));
+    }
+    if (activeTab === 'simulates') {
+      return filteredSimulates.length > 0 && filteredSimulates.every(item => selectedSimulates.has(item.task_id));
+    }
+    return filteredOpenings.length > 0 && filteredOpenings.every(item => selectedOpenings.has(item.id));
   };
 
-  const handleBatchDownloadExtracts = async () => {
-    if (selectedExtracts.size === 0) return;
-    setBatchDownloading(true);
-    setDownloadError(null);
-    try {
-      const zip = new JSZip();
-      const selected = extractsData.filter(e => selectedExtracts.has(e.id));
-      for (const r of selected) {
-        const filename = `extract_${r.id}_${r.template_type}.md`;
-        zip.file(filename, generateExtractMarkdown(r));
+  const handleBatchDeleteResults = async () => {
+    if (activeTab === 'extracts') {
+      for (const id of selectedExtracts) {
+        try {
+          await apiDeleteExtract(id);
+        } catch (err) {
+          console.error('批量删除提取结果失败:', err);
+        }
       }
-      const blob = await zip.generateAsync({ type: 'blob' });
-      downloadBlob(blob, 'extract_results.zip');
       setSelectedExtracts(new Set());
+      await fetchExtracts();
+    }
+    if (activeTab === 'simulates') {
+      for (const id of selectedSimulates) {
+        try {
+          await apiDeleteSimulate(id);
+        } catch (err) {
+          console.error('批量删除模拟任务失败:', err);
+        }
+      }
+      setSelectedSimulates(new Set());
+      await fetchSimulates();
+    }
+    if (activeTab === 'openings') {
+      for (const id of selectedOpenings) {
+        try {
+          await apiDeleteOpening(id);
+        } catch (err) {
+          console.error('批量删除开标结果失败:', err);
+        }
+      }
+      setSelectedOpenings(new Set());
+      await fetchOpenings();
+    }
+    await loadStats();
+  };
+
+  const canRenderFileAsMarkdown = (file: FileRecord) =>
+    ['md', 'markdown', 'txt', 'csv'].includes((file.type || '').toLowerCase());
+
+  const loadFilePreviewText = async (file: FileRecord) => {
+    if (filePreviewText[file.id]) return filePreviewText[file.id];
+    setFilePreviewLoadingId(file.id);
+    setDownloadError(null);
+    try {
+      const response = await authFetch(previewFileUrl(file.id));
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ detail: response.statusText }));
+        throw new Error(error.detail || `HTTP ${response.status}`);
+      }
+      const text = await response.text();
+      setFilePreviewText(prev => ({ ...prev, [file.id]: text }));
+      return text;
     } catch (err) {
-      setDownloadError(err instanceof Error ? err.message : '批量下载失败');
+      const message = err instanceof Error ? err.message : '文件内容加载失败';
+      setDownloadError(message);
+      return '';
     } finally {
-      setBatchDownloading(false);
+      setFilePreviewLoadingId(null);
     }
   };
 
-  // --- 多选处理 ---
-
-  const toggleFileSelect = (id: string) => {
-    setSelectedFiles(prev => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
-
-  const toggleAllFileSelect = (ids: string[]) => {
-    setSelectedFiles(prev => {
-      if (prev.size === ids.length) return new Set();
-      return new Set(ids);
-    });
-  };
-
-  const toggleSimulateSelect = (id: string) => {
-    setSelectedSimulates(prev => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
-
-  const toggleAllSimulateSelect = (ids: string[]) => {
-    setSelectedSimulates(prev => {
-      if (prev.size === ids.length) return new Set();
-      return new Set(ids);
-    });
-  };
-
-  const toggleOpeningSelect = (id: string) => {
-    setSelectedOpenings(prev => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
-
-  const toggleAllOpeningSelect = (ids: string[]) => {
-    setSelectedOpenings(prev => {
-      if (prev.size === ids.length) return new Set();
-      return new Set(ids);
-    });
-  };
-
-  const toggleExtractSelect = (id: string) => {
-    setSelectedExtracts(prev => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
-
-  const toggleAllExtractSelect = (ids: string[]) => {
-    setSelectedExtracts(prev => {
-      if (prev.size === ids.length) return new Set();
-      return new Set(ids);
-    });
-  };
-
-  // --- Tab 切换懒加载 ---
-
-  const handleTabChange = (key: string) => {
-    setActiveTab(key);
-    if (!loadedTabs.has(key)) {
-      loadedTabs.add(key);
-      if (key === 'simulates') fetchSimulates();
-      else if (key === 'openings') fetchOpenings();
-      else if (key === 'extracts') fetchExtracts();
+  const handleMarkdownClick = async (record: DetailRecord) => {
+    setMarkdownMode(true);
+    if (record.type === 'files') {
+      await loadFilePreviewText(record.record);
     }
   };
 
-  // --- 渲染辅助 ---
+  const getFileMarkdownContent = (file: FileRecord) =>
+    filePreviewText[file.id] ||
+    `# ${file.original_name}\n\n正在读取文件内容。若文件不是 Markdown、文本或 CSV，请使用原文预览或下载查看。`;
 
-  const tabs = [
-    { key: 'files', label: '文件管理', icon: FileUp },
-    { key: 'simulates', label: '模拟任务', icon: FlaskConical },
-    { key: 'openings', label: '开标结果', icon: BarChart3 },
-    { key: 'extracts', label: '提取结果', icon: FileSearch },
-  ];
+  const downloadMarkdown = (filename: string, markdown: string) => {
+    const blob = new Blob([markdown], { type: 'text/markdown;charset=utf-8' });
+    downloadBlob(blob, filename);
+  };
 
-  const StatCard = ({
-    label,
-    value,
-    icon: Icon,
-    color,
-  }: {
-    label: string;
-    value: number;
-    icon: React.ElementType;
-    color: string;
-  }) => (
-    <div className="rounded-xl border border-border p-6 flex items-center gap-4">
-      <div className={cn('rounded-full p-3', color)}>
-        <Icon className="h-6 w-6" />
-      </div>
-      <div>
-        <p className="text-2xl font-bold">{value}</p>
-        <p className="text-sm text-muted-foreground">{label}</p>
-      </div>
+  const handleDownloadDetail = (record: DetailRecord) => {
+    if (record.type === 'files') {
+      handleDownloadFile(record.record);
+      return;
+    }
+    const filename =
+      record.type === 'extracts'
+        ? `extract_${record.record.id}_${record.record.template_type}.md`
+        : record.type === 'simulates'
+          ? `simulate_${record.record.task_id}.md`
+          : `opening_${record.record.id}.md`;
+    downloadMarkdown(filename, getRecordMarkdown(record));
+  };
+
+  const handleDelete = async (record: DetailRecord) => {
+    if (record.type === 'files') {
+      await apiDeleteFile(record.record.id);
+      useFileStore.getState().removeFile(record.record.id);
+      await fetchFiles();
+    }
+    if (record.type === 'extracts') {
+      await apiDeleteExtract(record.record.id);
+      await fetchExtracts();
+    }
+    if (record.type === 'simulates') {
+      await apiDeleteSimulate(record.record.task_id);
+      await fetchSimulates();
+    }
+    if (record.type === 'openings') {
+      await apiDeleteOpening(record.record.id);
+      await fetchOpenings();
+    }
+    await loadStats();
+    setDetail(null);
+    setQuickPreview(null);
+  };
+
+  const handleBatchDownload = async () => {
+    const zip = new JSZip();
+    if (activeTab === 'files') return;
+    if (activeTab === 'extracts') {
+      const selected = filteredExtracts.filter(item => selectedExtracts.has(item.id));
+      for (const item of selected) zip.file(`extract_${item.id}.md`, generateExtractMarkdown(item));
+    }
+    if (activeTab === 'simulates') {
+      const selected = filteredSimulates.filter(item => selectedSimulates.has(item.task_id));
+      for (const item of selected) zip.file(`simulate_${item.task_id}.md`, generateSimulateMarkdown(item));
+    }
+    if (activeTab === 'openings') {
+      const selected = filteredOpenings.filter(item => selectedOpenings.has(item.id));
+      for (const item of selected) zip.file(`opening_${item.id}.md`, generateOpeningMarkdown(item));
+    }
+    const blob = await zip.generateAsync({ type: 'blob' });
+    downloadBlob(blob, `${activeTab}_results.zip`);
+    setSelectedExtracts(new Set());
+    setSelectedSimulates(new Set());
+    setSelectedOpenings(new Set());
+  };
+
+  const openDetail = (record: DetailRecord) => {
+    setMarkdownMode(false);
+    setQuickPreview(null);
+    setDetail(record);
+  };
+
+  const openPreview = (record: DetailRecord) => {
+    setMarkdownMode(false);
+    setQuickPreview(record);
+  };
+
+  const openMarkdownPreview = async (record: DetailRecord) => {
+    setQuickPreview(record);
+    await handleMarkdownClick(record);
+  };
+
+  const renderBadge = (label: string, className?: string) => (
+    <span
+      className={cn(
+        'rounded-full px-2.5 py-1 text-xs font-medium',
+        className || 'bg-muted text-muted-foreground'
+      )}
+    >
+      {label}
+    </span>
+  );
+
+  const renderCardActions = (record: DetailRecord) => (
+    <div className="flex items-center gap-2">
+      <button
+        className="inline-flex h-8 items-center gap-1.5 rounded-full border border-border px-3 text-xs font-medium hover:bg-muted"
+        onClick={() => openPreview(record)}
+      >
+        <Eye className="h-3.5 w-3.5" />
+        预览
+      </button>
+      <button
+        className="inline-flex h-8 items-center rounded-full border border-border px-3 text-xs font-medium hover:bg-muted disabled:opacity-50"
+        disabled={record.type === 'files' && !canRenderFileAsMarkdown(record.record)}
+        onClick={() => openMarkdownPreview(record)}
+      >
+        Markdown
+      </button>
+      <button
+        className="inline-flex h-8 items-center gap-1.5 rounded-full border border-border px-3 text-xs font-medium hover:bg-muted"
+        onClick={() => openDetail(record)}
+      >
+        详情
+      </button>
     </div>
   );
 
-  const Pagination = ({
-    page,
-    total,
-    onPageChange,
-  }: {
-    page: number;
-    total: number;
-    onPageChange: (p: number) => void;
-  }) => {
-    const totalPages = Math.ceil(total / 20) || 1;
-    return (
-      <div className="flex items-center justify-between p-3 border-t text-sm">
-        <span className="text-muted-foreground">共 {total} 条</span>
-        <div className="flex items-center gap-2">
+  const renderFileCard = (file: FileRecord) => (
+    <Card
+      key={file.id}
+      className="group overflow-hidden rounded-2xl transition-all hover:border-primary/30 hover:shadow-sm"
+    >
+      <CardHeader className="space-y-4 p-5">
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0 space-y-2">
+            <div className="flex items-start gap-2">
+              <input
+                type="checkbox"
+                className="mt-0.5 h-4 w-4 rounded border-border"
+                checked={selectedFiles.has(file.id)}
+                onChange={() => toggleFileSelect(file.id)}
+                onClick={event => event.stopPropagation()}
+              />
+              <CardTitle className="truncate text-base">{getFileTitle(file)}</CardTitle>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              {renderBadge(
+                file.type || 'file',
+                fileTypeColor[file.type] || 'bg-muted text-muted-foreground'
+              )}
+              {renderBadge(formatSize(file.size))}
+            </div>
+          </div>
           <button
-            className="px-3 py-1 border rounded hover:bg-muted disabled:opacity-50"
-            disabled={page <= 1}
-            onClick={() => onPageChange(page - 1)}
+            className="text-xs font-medium text-primary hover:underline"
+            onClick={() => openDetail({ type: 'files', record: file })}
           >
-            上一页
-          </button>
-          <span>
-            {page} / {totalPages}
-          </span>
-          <button
-            className="px-3 py-1 border rounded hover:bg-muted disabled:opacity-50"
-            disabled={page >= totalPages}
-            onClick={() => onPageChange(page + 1)}
-          >
-            下一页
+            详情
           </button>
         </div>
+      </CardHeader>
+      <CardContent className="space-y-4 p-5 pt-0">
+        <div className="min-h-28 rounded-xl border border-dashed border-border bg-muted/20 p-4 text-sm leading-6 text-muted-foreground">
+          <p>原始上传文件</p>
+          <p>文件名：{file.original_name}</p>
+          <p>上传时间：{formatDate(file.created_at)}</p>
+        </div>
+        <div className="flex items-center justify-between gap-3">
+          {renderCardActions({ type: 'files', record: file })}
+          <button
+            className="inline-flex h-8 items-center gap-1.5 rounded-full bg-primary px-3 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+            disabled={downloadingId === file.id}
+            onClick={() => handleDownloadFile(file)}
+          >
+            <Download className="h-3.5 w-3.5" />
+            下载
+          </button>
+        </div>
+      </CardContent>
+    </Card>
+  );
+
+  const renderExtractCard = (result: ExtractResultRecord) => (
+    <Card
+      key={result.id}
+      className="group overflow-hidden rounded-2xl transition-all hover:border-primary/30 hover:shadow-sm"
+    >
+      <CardHeader className="space-y-4 p-5">
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0 space-y-2">
+            <div className="flex items-start gap-2">
+              <input
+                type="checkbox"
+                className="mt-0.5 h-4 w-4 rounded border-border"
+                checked={selectedExtracts.has(result.id)}
+                onChange={() => toggleResultSelect(result.id)}
+              />
+              <CardTitle className="truncate text-base">{getExtractTitle(result)}</CardTitle>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              {renderBadge(result.template_type)}
+              {renderBadge(result.mode, 'bg-primary/10 text-primary')}
+              {result.status && renderBadge(result.status)}
+            </div>
+          </div>
+          <button
+            className="text-xs font-medium text-primary hover:underline"
+            onClick={() => openDetail({ type: 'extracts', record: result })}
+          >
+            详情
+          </button>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-4 p-5 pt-0">
+        <div className="line-clamp-5 min-h-28 rounded-xl bg-muted/30 p-4 text-sm leading-6 text-muted-foreground">
+          {compactText(result.content)}
+        </div>
+        <div className="flex items-center justify-between gap-3">
+          {renderCardActions({ type: 'extracts', record: result })}
+          <button
+            className="inline-flex h-8 items-center gap-1.5 rounded-full bg-primary px-3 text-xs font-medium text-primary-foreground hover:bg-primary/90"
+            onClick={() =>
+              downloadMarkdown(`extract_${result.id}_${result.template_type}.md`, result.content)
+            }
+          >
+            <Download className="h-3.5 w-3.5" />
+            下载
+          </button>
+        </div>
+      </CardContent>
+    </Card>
+  );
+
+  const renderSimulateCard = (task: SimulateTaskRecord) => {
+    const markdown = generateSimulateMarkdown(task);
+    const status = statusMap[task.status] || {
+      color: 'bg-muted text-muted-foreground',
+      text: task.status,
+    };
+    return (
+      <Card
+        key={task.task_id}
+        className="group overflow-hidden rounded-2xl transition-all hover:border-primary/30 hover:shadow-sm"
+      >
+        <CardHeader className="space-y-4 p-5">
+          <div className="flex items-start justify-between gap-4">
+            <div className="min-w-0 space-y-2">
+              <div className="flex items-start gap-2">
+                <input
+                  type="checkbox"
+                  className="mt-0.5 h-4 w-4 rounded border-border"
+                  checked={selectedSimulates.has(task.task_id)}
+                  onChange={() => toggleResultSelect(task.task_id)}
+                />
+                <CardTitle className="truncate text-base">{getSimulateTitle(task)}</CardTitle>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                {renderBadge(status.text, status.color)}
+                {renderBadge(`Step ${task.current_step}/4`, 'bg-primary/10 text-primary')}
+              </div>
+            </div>
+            <button
+              className="text-xs font-medium text-primary hover:underline"
+              onClick={() => openDetail({ type: 'simulates', record: task })}
+            >
+              详情
+            </button>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4 p-5 pt-0">
+          <div className="line-clamp-5 min-h-28 rounded-xl bg-muted/30 p-4 text-sm leading-6 text-muted-foreground">
+            {compactText(markdown)}
+          </div>
+          <div className="flex items-center justify-between gap-3">
+            {renderCardActions({ type: 'simulates', record: task })}
+            <button
+              className="inline-flex h-8 items-center gap-1.5 rounded-full bg-primary px-3 text-xs font-medium text-primary-foreground hover:bg-primary/90"
+              onClick={() => downloadMarkdown(`simulate_${task.task_id}.md`, markdown)}
+            >
+              <Download className="h-3.5 w-3.5" />
+              下载
+            </button>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  };
+
+  const renderOpeningCard = (result: OpeningResultRecord) => {
+    const markdown = generateOpeningMarkdown(result);
+    return (
+      <Card
+        key={result.id}
+        className="group overflow-hidden rounded-2xl transition-all hover:border-primary/30 hover:shadow-sm"
+      >
+        <CardHeader className="space-y-4 p-5">
+          <div className="flex items-start justify-between gap-4">
+            <div className="min-w-0 space-y-2">
+              <div className="flex items-start gap-2">
+                <input
+                  type="checkbox"
+                  className="mt-0.5 h-4 w-4 rounded border-border"
+                  checked={selectedOpenings.has(result.id)}
+                  onChange={() => toggleResultSelect(result.id)}
+                />
+                <CardTitle className="truncate text-base">{getOpeningTitle(result)}</CardTitle>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                {renderBadge(`${result.bidder_count || 0} 家投标人`, 'bg-primary/10 text-primary')}
+                {renderBadge(result.status || '已生成')}
+              </div>
+            </div>
+            <button
+              className="text-xs font-medium text-primary hover:underline"
+              onClick={() => openDetail({ type: 'openings', record: result })}
+            >
+              详情
+            </button>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4 p-5 pt-0">
+          <div className="line-clamp-5 min-h-28 rounded-xl bg-muted/30 p-4 text-sm leading-6 text-muted-foreground">
+            {compactText(markdown)}
+          </div>
+          <div className="flex items-center justify-between gap-3">
+            {renderCardActions({ type: 'openings', record: result })}
+            <button
+              className="inline-flex h-8 items-center gap-1.5 rounded-full bg-primary px-3 text-xs font-medium text-primary-foreground hover:bg-primary/90"
+              onClick={() => downloadMarkdown(`opening_${result.id}.md`, markdown)}
+            >
+              <Download className="h-3.5 w-3.5" />
+              下载
+            </button>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  };
+
+  const renderGrid = () => {
+    if (isLoading) {
+      return (
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-2 2xl:grid-cols-3">
+          {Array.from({ length: 6 }).map((_, index) => (
+            <div
+              key={index}
+              className="h-64 animate-pulse rounded-2xl border border-border bg-muted/40"
+            />
+          ))}
+        </div>
+      );
+    }
+
+    if (currentCount === 0) {
+      return (
+        <div className="rounded-2xl border border-dashed border-border bg-muted/20 px-6 py-16 text-center">
+          <Layers3 className="mx-auto mb-4 h-10 w-10 text-muted-foreground" />
+          <h3 className="text-base font-semibold text-foreground">暂无匹配结果</h3>
+          <p className="mt-2 text-sm text-muted-foreground">
+            请调整搜索关键词、类型或时间范围后再试。
+          </p>
+        </div>
+      );
+    }
+
+    return (
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2 2xl:grid-cols-3">
+        {activeTab === 'files' && filteredFiles.map(renderFileCard)}
+        {activeTab === 'extracts' && filteredExtracts.map(renderExtractCard)}
+        {activeTab === 'simulates' && filteredSimulates.map(renderSimulateCard)}
+        {activeTab === 'openings' && filteredOpenings.map(renderOpeningCard)}
       </div>
     );
   };
 
-  // --- 渲染 ---
+  const renderDetailContent = (record: DetailRecord) => {
+    const markdown = record.type === 'files' ? getFileMarkdownContent(record.record) : getRecordMarkdown(record);
+    if (record.type === 'files' && !markdownMode) {
+      return (
+        <iframe
+          title={record.record.original_name}
+          src={previewFileUrl(record.record.id)}
+          className="h-[calc(100vh-17rem)] w-full rounded-xl border border-border bg-background"
+        />
+      );
+    }
+
+    if (record.type === 'files' && markdownMode && filePreviewLoadingId === record.record.id) {
+      return (
+        <div className="flex h-[calc(100vh-17rem)] items-center justify-center rounded-xl border border-border bg-muted/20 text-sm text-muted-foreground">
+          正在读取文件内容...
+        </div>
+      );
+    }
+
+    return markdownMode ? (
+      <div className="max-h-[calc(100vh-17rem)] overflow-auto rounded-xl border border-border bg-background p-6">
+        <MarkdownPreview content={markdown} />
+      </div>
+    ) : (
+      <pre className="max-h-[calc(100vh-17rem)] overflow-auto rounded-xl border border-border bg-background p-6 text-sm leading-6 whitespace-pre-wrap">
+        {markdown}
+      </pre>
+    );
+  };
+
+  const renderDetailPage = (record: DetailRecord) => (
+    <WorkbenchLayout>
+      <div className="w-full space-y-6">
+        <div className="flex items-center justify-between gap-4">
+          <button
+            className="inline-flex h-9 items-center gap-2 rounded-full border border-border px-4 text-sm font-medium hover:bg-muted"
+            onClick={() => setDetail(null)}
+          >
+            <ArrowLeft className="h-4 w-4" />
+            返回列表
+          </button>
+          <div className="flex items-center gap-2">
+            <button
+              className={cn(
+                'inline-flex h-9 items-center rounded-full border border-border px-4 text-sm font-medium hover:bg-muted',
+                !markdownMode && 'bg-muted text-foreground'
+              )}
+              onClick={() => setMarkdownMode(false)}
+            >
+              原文
+            </button>
+            <button
+              className={cn(
+                'inline-flex h-9 items-center rounded-full border border-border px-4 text-sm font-medium hover:bg-muted disabled:opacity-50',
+                markdownMode && 'bg-muted text-foreground'
+              )}
+              disabled={record.type === 'files' && !canRenderFileAsMarkdown(record.record)}
+              onClick={() => handleMarkdownClick(record)}
+            >
+              Markdown
+            </button>
+            <button
+              className="inline-flex h-9 items-center gap-2 rounded-full bg-primary px-4 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+              onClick={() => handleDownloadDetail(record)}
+            >
+              <Download className="h-4 w-4" />
+              下载
+            </button>
+          </div>
+        </div>
+
+        <div>
+          <p className="text-sm text-muted-foreground">
+            文件管理 / {tabs.find(t => t.key === record.type)?.label}
+          </p>
+          <h1 className="mt-2 text-2xl font-bold tracking-tight text-foreground">
+            {getDetailTitle(record)}
+          </h1>
+        </div>
+
+        <div className="grid grid-cols-1 gap-6 xl:grid-cols-[320px_minmax(0,1fr)]">
+          <Card className="rounded-2xl">
+            <CardHeader>
+              <CardTitle className="text-base">文件信息</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4 text-sm">
+              <div>
+                <p className="text-muted-foreground">类型</p>
+                <p className="mt-1 font-medium">{tabs.find(t => t.key === record.type)?.label}</p>
+              </div>
+              <div>
+                <p className="text-muted-foreground">创建时间</p>
+                <p className="mt-1 font-medium">
+                  {formatDate(
+                    record.type === 'files'
+                      ? record.record.created_at
+                      : record.type === 'extracts'
+                        ? record.record.created_at
+                        : record.type === 'simulates'
+                          ? record.record.created_at
+                          : record.record.created_at
+                  )}
+                </p>
+              </div>
+              <div>
+                <p className="text-muted-foreground">内容摘要</p>
+                <p className="mt-2 leading-6 text-foreground">
+                  {compactText(getRecordMarkdown(record), '原始文件请使用右侧预览查看。')}
+                </p>
+              </div>
+              <button
+                className="inline-flex h-9 w-full items-center justify-center gap-2 rounded-full border border-destructive/30 px-4 text-sm font-medium text-destructive hover:bg-destructive/10"
+                onClick={() =>
+                  setConfirmAction({
+                    title: '确认删除',
+                    message: `确定删除「${getDetailTitle(record)}」？`,
+                    onConfirm: () => handleDelete(record),
+                  })
+                }
+              >
+                <Trash2 className="h-4 w-4" />
+                删除
+              </button>
+            </CardContent>
+          </Card>
+
+          <Card className="rounded-2xl">
+            <CardHeader className="flex-row items-center justify-between space-y-0">
+              <CardTitle className="text-base">完整内容预览</CardTitle>
+              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                <Calendar className="h-3.5 w-3.5" />
+                {formatDate(
+                  record.type === 'files'
+                    ? record.record.created_at
+                    : record.type === 'extracts'
+                      ? record.record.created_at
+                      : record.type === 'simulates'
+                        ? record.record.created_at
+                        : record.record.created_at
+                )}
+              </div>
+            </CardHeader>
+            <CardContent>{renderDetailContent(record)}</CardContent>
+          </Card>
+        </div>
+      </div>
+    </WorkbenchLayout>
+  );
+
+  if (detail) return renderDetailPage(detail);
 
   return (
     <WorkbenchLayout>
-      <div className="mx-auto max-w-5xl space-y-6">
-        <PageHeader title="数据管理" />
+      <div className="w-full space-y-6">
+        <PageHeader title="文件管理" description="统一管理上传文件、提取结果、模拟标书与开标报告" />
 
-        {/* 统计卡片 */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <StatCard
-            label="文件"
-            value={stats.files}
-            icon={FileUp}
-            color="bg-primary/10 text-primary"
-          />
-          <StatCard
-            label="模拟任务"
-            value={stats.simulate_tasks}
-            icon={FlaskConical}
-            color="bg-secondary/10 text-secondary"
-          />
-          <StatCard
-            label="开标结果"
-            value={stats.opening_results}
-            icon={BarChart3}
-            color="bg-success/10 text-success"
-          />
-          <StatCard
-            label="提取结果"
-            value={stats.extract_results}
-            icon={FileSearch}
-            color="bg-primary/10 text-primary"
-          />
+        <div className="grid grid-cols-2 gap-4 xl:grid-cols-4">
+          {tabs.map(tab => {
+            const value =
+              tab.key === 'files'
+                ? stats.files
+                : tab.key === 'extracts'
+                  ? stats.extract_results
+                  : tab.key === 'simulates'
+                    ? stats.simulate_tasks
+                    : stats.opening_results;
+            return (
+              <Card key={tab.key} className="rounded-2xl">
+                <CardContent className="flex items-center gap-4 p-5">
+                  <div className="rounded-2xl bg-primary/10 p-3 text-primary">
+                    <tab.icon className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <p className="text-2xl font-bold tracking-tight text-foreground">{value}</p>
+                    <p className="text-sm text-muted-foreground">{tab.label}</p>
+                  </div>
+                </CardContent>
+              </Card>
+            );
+          })}
         </div>
 
-        {/* Tab 导航 */}
-        <TabNavigation tabs={tabs} activeTab={activeTab} onTabChange={handleTabChange} />
+        <Card className="rounded-2xl">
+          <CardContent className="space-y-5 p-5">
+            <div className="flex flex-wrap gap-2">
+              {tabs.map(tab => {
+                const active = activeTab === tab.key;
+                return (
+                  <button
+                    key={tab.key}
+                    className={cn(
+                      'inline-flex h-10 items-center gap-2 rounded-full px-4 text-sm font-medium transition-colors',
+                      active
+                        ? 'bg-primary text-primary-foreground'
+                        : 'bg-muted text-muted-foreground hover:text-foreground'
+                    )}
+                    onClick={() => handleTabChange(tab.key)}
+                  >
+                    <tab.icon className="h-4 w-4" />
+                    {tab.label}
+                  </button>
+                );
+              })}
+            </div>
 
-        {/* 下载错误提示 */}
+            <div className="grid grid-cols-1 gap-3 xl:grid-cols-[minmax(0,1fr)_180px_180px_180px]">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <input
+                  value={searchKeyword}
+                  onChange={event => setSearchKeyword(event.target.value)}
+                  placeholder="搜索文件名、项目名或关键词..."
+                  className="h-11 w-full rounded-xl border border-border bg-background pl-10 pr-3 text-sm outline-none transition-colors focus:border-primary"
+                />
+              </div>
+              <select
+                className="h-11 rounded-xl border border-border bg-background px-3 text-sm outline-none focus:border-primary"
+                value={fileTypeFilter}
+                onChange={event => setFileTypeFilter(event.target.value)}
+                disabled={activeTab !== 'files'}
+              >
+                <option value="">全部类型</option>
+                <option value="pdf">PDF</option>
+                <option value="md">Markdown</option>
+                <option value="docx">Word</option>
+                <option value="xlsx">Excel</option>
+                <option value="csv">CSV</option>
+              </select>
+              <select
+                className="h-11 rounded-xl border border-border bg-background px-3 text-sm outline-none focus:border-primary"
+                value={statusFilter}
+                onChange={event => setStatusFilter(event.target.value)}
+                disabled={activeTab !== 'simulates'}
+              >
+                <option value="">全部状态</option>
+                {Object.entries(statusMap).map(([key, item]) => (
+                  <option key={key} value={key}>
+                    {item.text}
+                  </option>
+                ))}
+              </select>
+              <select
+                className="h-11 rounded-xl border border-border bg-background px-3 text-sm outline-none focus:border-primary"
+                value={timeFilter}
+                onChange={event => setTimeFilter(event.target.value)}
+              >
+                <option value="all">全部时间</option>
+                <option value="7d">最近 7 天</option>
+                <option value="30d">最近 30 天</option>
+              </select>
+            </div>
+
+            <div className="flex items-center justify-between gap-3 text-sm text-muted-foreground">
+              <span>
+                当前展示 <strong className="text-foreground">{currentCount}</strong> 条
+                {searchKeyword ? `，关键词：${searchKeyword}` : ''}
+              </span>
+              {activeTab === 'files' && currentCount > 0 && (
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    className="inline-flex h-9 items-center rounded-full border border-border px-4 text-sm font-medium text-foreground hover:bg-muted"
+                    onClick={toggleAllFilteredFiles}
+                  >
+                    {filteredFiles.length > 0 && filteredFiles.every(file => selectedFiles.has(file.id))
+                      ? '取消全选'
+                      : '全选当前'}
+                  </button>
+                  <button
+                    className="inline-flex h-9 items-center gap-2 rounded-full border border-border px-4 text-sm font-medium text-foreground hover:bg-muted disabled:opacity-50"
+                    disabled={selectedFiles.size === 0 || batchDownloading}
+                    onClick={handleBatchDownloadFiles}
+                  >
+                    <Archive className="h-4 w-4" />
+                    批量下载{selectedFiles.size > 0 ? `（${selectedFiles.size}）` : ''}
+                  </button>
+                  <button
+                    className="inline-flex h-9 items-center gap-2 rounded-full border border-destructive/30 px-4 text-sm font-medium text-destructive hover:bg-destructive/10 disabled:opacity-50"
+                    disabled={selectedFiles.size === 0}
+                    onClick={() =>
+                      setConfirmAction({
+                        title: '批量删除文件',
+                        message: `确定删除选中的 ${selectedFiles.size} 个文件？`,
+                        onConfirm: handleBatchDeleteFiles,
+                      })
+                    }
+                  >
+                    <Trash2 className="h-4 w-4" />
+                    批量删除{selectedFiles.size > 0 ? `（${selectedFiles.size}）` : ''}
+                  </button>
+                </div>
+              )}
+              {activeTab !== 'files' && currentCount > 0 && (
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    className="inline-flex h-9 items-center rounded-full border border-border px-4 text-sm font-medium text-foreground hover:bg-muted"
+                    onClick={toggleAllCurrentResults}
+                  >
+                    {currentResultsAllSelected() ? '取消全选' : '全选当前'}
+                  </button>
+                  <button
+                    className="inline-flex h-9 items-center gap-2 rounded-full border border-border px-4 text-sm font-medium text-foreground hover:bg-muted disabled:opacity-50"
+                    disabled={getSelectionState().size === 0 || batchDownloading}
+                    onClick={handleBatchDownload}
+                  >
+                    <Archive className="h-4 w-4" />
+                    批量下载{getSelectionState().size > 0 ? `（${getSelectionState().size}）` : ''}
+                  </button>
+                  <button
+                    className="inline-flex h-9 items-center gap-2 rounded-full border border-destructive/30 px-4 text-sm font-medium text-destructive hover:bg-destructive/10 disabled:opacity-50"
+                    disabled={getSelectionState().size === 0}
+                    onClick={() =>
+                      setConfirmAction({
+                        title: '批量删除结果',
+                        message: `确定删除选中的 ${getSelectionState().size} 条结果？`,
+                        onConfirm: handleBatchDeleteResults,
+                      })
+                    }
+                  >
+                    <Trash2 className="h-4 w-4" />
+                    批量删除{getSelectionState().size > 0 ? `（${getSelectionState().size}）` : ''}
+                  </button>
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+
         {downloadError && (
-          <div className="p-4 rounded-lg bg-destructive/10 text-destructive flex items-center justify-between">
+          <div className="flex items-center justify-between rounded-xl bg-destructive/10 p-4 text-sm text-destructive">
             <span>{downloadError}</span>
-            <button className="p-1 hover:bg-muted rounded" onClick={() => setDownloadError(null)}>
+            <button
+              className="rounded p-1 hover:bg-destructive/10"
+              onClick={() => setDownloadError(null)}
+            >
               <X className="h-4 w-4" />
             </button>
           </div>
         )}
 
-        {/* --- 文件管理 Tab --- */}
-        {activeTab === 'files' && (
-          <div>
-            {/* 批量操作栏 */}
-            {selectedFiles.size > 0 && (
-              <div className="flex items-center gap-3 mb-4 p-3 rounded-lg bg-muted/50 border border-border">
-                <span className="text-sm">
-                  已选择 <strong>{selectedFiles.size}</strong> 个文件
-                </span>
+        {renderGrid()}
+
+        {quickPreview && (
+          <div className="fixed inset-0 z-50 flex justify-end bg-black/40">
+            <div className="h-full w-full max-w-2xl border-l border-border bg-card shadow-xl">
+              <div className="flex items-center justify-between border-b border-border p-5">
+                <div>
+                  <p className="text-xs text-muted-foreground">快速预览</p>
+                  <h3 className="mt-1 max-w-lg truncate text-lg font-semibold text-foreground">
+                    {getDetailTitle(quickPreview)}
+                  </h3>
+                </div>
                 <button
-                  className="px-3 py-1.5 bg-primary text-primary-foreground rounded hover:bg-primary/90 text-sm flex items-center gap-1.5 disabled:opacity-50"
-                  onClick={handleBatchDownloadFiles}
-                  disabled={batchDownloading}
+                  className="rounded-full p-2 hover:bg-muted"
+                  onClick={() => setQuickPreview(null)}
                 >
-                  {batchDownloading ? (
-                    <span className="inline-block w-4 h-4 border-2 border-primary-foreground/30 border-t-primary-foreground rounded-full animate-spin" />
-                  ) : (
-                    <Archive className="h-4 w-4" />
-                  )}
-                  批量下载
-                </button>
-                <button
-                  className="px-3 py-1.5 bg-destructive text-destructive-foreground rounded hover:bg-destructive/90 text-sm flex items-center gap-1.5"
-                  onClick={handleBatchDeleteFiles}
-                >
-                  <Trash2 className="h-4 w-4" />
-                  批量删除
-                </button>
-                <button
-                  className="px-3 py-1.5 border rounded hover:bg-muted text-sm"
-                  onClick={() => setSelectedFiles(new Set())}
-                >
-                  取消选择
+                  <X className="h-5 w-5" />
                 </button>
               </div>
-            )}
-
-            {/* 筛选 */}
-            <div className="flex items-center gap-3 mb-4">
-              <span className="text-sm text-muted-foreground">文件类型：</span>
-              <select
-                className="border rounded px-3 py-1 text-sm"
-                value={fileTypeFilter || ''}
-                onChange={e => setFileTypeFilter(e.target.value || undefined)}
-              >
-                <option value="">全部类型</option>
-                <option value="pdf">PDF</option>
-                <option value="excel">Excel</option>
-                <option value="csv">CSV</option>
-                <option value="markdown">Markdown</option>
-                <option value="word">Word</option>
-              </select>
-            </div>
-
-            {/* 表格 */}
-            <div className="rounded-xl border border-border overflow-hidden">
-              <table className="w-full">
-                <thead className="bg-muted/50">
-                  <tr>
-                    <th className="p-3 text-left font-semibold text-sm w-10">
-                      <input
-                        type="checkbox"
-                        className="rounded"
-                        checked={filesData.length > 0 && selectedFiles.size === filesData.length}
-                        onChange={() => toggleAllFileSelect(filesData.map(f => f.id))}
-                      />
-                    </th>
-                    <th className="p-3 text-left font-semibold text-sm">ID</th>
-                    <th className="p-3 text-left font-semibold text-sm">文件名</th>
-                    <th className="p-3 text-left font-semibold text-sm">大小</th>
-                    <th className="p-3 text-left font-semibold text-sm">类型</th>
-                    <th className="p-3 text-left font-semibold text-sm">上传时间</th>
-                    <th className="p-3 text-right font-semibold text-sm">操作</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y">
-                  {filesLoading ? (
-                    <tr>
-                      <td colSpan={7} className="p-8 text-center text-muted-foreground">
-                        加载中...
-                      </td>
-                    </tr>
-                  ) : filesData.length === 0 ? (
-                    <tr>
-                      <td colSpan={7} className="p-8 text-center text-muted-foreground">
-                        暂无文件
-                      </td>
-                    </tr>
-                  ) : (
-                    filesData.map(file => (
-                      <tr
-                        key={file.id}
-                        className={cn(
-                          'hover:bg-muted/30',
-                          selectedFiles.has(file.id) && 'bg-primary/5'
-                        )}
-                      >
-                        <td className="p-3">
-                          <input
-                            type="checkbox"
-                            className="rounded"
-                            checked={selectedFiles.has(file.id)}
-                            onChange={() => toggleFileSelect(file.id)}
-                          />
-                        </td>
-                        <td className="p-3 text-xs text-muted-foreground">{file.id}</td>
-                        <td className="p-3 font-medium">{file.original_name}</td>
-                        <td className="p-3 text-muted-foreground">{formatSize(file.size)}</td>
-                        <td className="p-3">
-                          <span
-                            className={cn(
-                              'px-2 py-1 rounded text-xs',
-                              fileTypeColor[file.type] || 'bg-muted text-muted-foreground'
-                            )}
-                          >
-                            {file.type}
-                          </span>
-                        </td>
-                        <td className="p-3 text-muted-foreground text-sm">
-                          {formatDate(file.created_at)}
-                        </td>
-                        <td className="p-3">
-                          <div className="flex items-center justify-end gap-1">
-                            <button
-                              className="p-2 hover:bg-muted rounded"
-                              title="查看详情"
-                              onClick={() => setFileDetail(file)}
-                            >
-                              <Eye className="h-4 w-4" />
-                            </button>
-                            <button
-                              className="p-2 hover:bg-primary/10 text-primary rounded"
-                              title="预览文件"
-                              onClick={() => window.open(previewFileUrl(file.id), '_blank')}
-                            >
-                              <FileUp className="h-4 w-4" />
-                            </button>
-                            <button
-                              className={cn(
-                                'p-2 hover:bg-primary/10 text-primary rounded',
-                                downloadingId === file.id && 'opacity-50'
-                              )}
-                              title="下载"
-                              disabled={downloadingId === file.id}
-                              onClick={() => handleDownloadFile(file)}
-                            >
-                              <Download className="h-4 w-4" />
-                            </button>
-                            <button
-                              className="p-2 hover:bg-destructive/10 text-destructive rounded"
-                              title="删除"
-                              onClick={() =>
-                                setConfirmAction({
-                                  title: '确认删除',
-                                  message: `删除文件「${file.original_name}」？`,
-                                  onConfirm: () => handleDeleteFile(file.id),
-                                })
-                              }
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-              <Pagination page={filesPage} total={filesTotal} onPageChange={fetchFiles} />
+              <div className="flex items-center justify-between border-b border-border px-5 py-3">
+                <div className="flex items-center gap-2">
+                  <button
+                    className={cn(
+                      'rounded-full px-3 py-1.5 text-xs font-medium',
+                      !markdownMode
+                        ? 'bg-muted text-foreground'
+                        : 'text-muted-foreground hover:bg-muted'
+                    )}
+                    onClick={() => setMarkdownMode(false)}
+                  >
+                    原文
+                  </button>
+                  <button
+                    className={cn(
+                      'rounded-full px-3 py-1.5 text-xs font-medium disabled:opacity-50',
+                      markdownMode ? 'bg-muted text-foreground' : 'text-muted-foreground hover:bg-muted'
+                    )}
+                    disabled={quickPreview.type === 'files' && !canRenderFileAsMarkdown(quickPreview.record)}
+                    onClick={() => handleMarkdownClick(quickPreview)}
+                  >
+                    Markdown
+                  </button>
+                </div>
+                <button
+                  className="text-xs font-medium text-primary hover:underline"
+                  onClick={() => openDetail(quickPreview)}
+                >
+                  打开详情
+                </button>
+              </div>
+              <div className="h-[calc(100vh-8.5rem)] overflow-auto p-5">
+                {renderDetailContent(quickPreview)}
+              </div>
             </div>
           </div>
         )}
 
-        {/* --- 模拟任务 Tab --- */}
-        {activeTab === 'simulates' && (
-          <div>
-            {/* 批量操作栏 */}
-            {selectedSimulates.size > 0 && (
-              <div className="flex items-center gap-3 mb-4 p-3 rounded-lg bg-muted/50 border border-border">
-                <span className="text-sm">
-                  已选择 <strong>{selectedSimulates.size}</strong> 个任务
-                </span>
-                <button
-                  className="px-3 py-1.5 bg-primary text-primary-foreground rounded hover:bg-primary/90 text-sm flex items-center gap-1.5 disabled:opacity-50"
-                  onClick={handleBatchDownloadSimulates}
-                  disabled={batchDownloading}
-                >
-                  {batchDownloading ? (
-                    <span className="inline-block w-4 h-4 border-2 border-primary-foreground/30 border-t-primary-foreground rounded-full animate-spin" />
-                  ) : (
-                    <Archive className="h-4 w-4" />
-                  )}
-                  批量下载
-                </button>
-                <button
-                  className="px-3 py-1.5 bg-destructive text-destructive-foreground rounded hover:bg-destructive/90 text-sm flex items-center gap-1.5"
-                  onClick={handleBatchDeleteSimulates}
-                >
-                  <Trash2 className="h-4 w-4" />
-                  批量删除
-                </button>
-                <button
-                  className="px-3 py-1.5 border rounded hover:bg-muted text-sm"
-                  onClick={() => setSelectedSimulates(new Set())}
-                >
-                  取消选择
-                </button>
-              </div>
-            )}
-
-            <div className="flex items-center gap-3 mb-4">
-              <span className="text-sm text-muted-foreground">状态：</span>
-              <select
-                className="border rounded px-3 py-1 text-sm"
-                value={statusFilter || ''}
-                onChange={e => setStatusFilter(e.target.value || undefined)}
-              >
-                <option value="">全部状态</option>
-                {Object.entries(statusMap).map(([k, v]) => (
-                  <option key={k} value={k}>
-                    {v.text}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="rounded-xl border border-border overflow-hidden">
-              <table className="w-full">
-                <thead className="bg-muted/50">
-                  <tr>
-                    <th className="p-3 text-left font-semibold text-sm w-10">
-                      <input
-                        type="checkbox"
-                        className="rounded"
-                        checked={
-                          simulatesData.length > 0 &&
-                          selectedSimulates.size === simulatesData.length
-                        }
-                        onChange={() => toggleAllSimulateSelect(simulatesData.map(t => t.task_id))}
-                      />
-                    </th>
-                    <th className="p-3 text-left font-semibold text-sm">名称</th>
-                    <th className="p-3 text-left font-semibold text-sm">状态</th>
-                    <th className="p-3 text-left font-semibold text-sm">当前步骤</th>
-                    <th className="p-3 text-left font-semibold text-sm">创建时间</th>
-                    <th className="p-3 text-right font-semibold text-sm">操作</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y">
-                  {simulatesLoading ? (
-                    <tr>
-                      <td colSpan={6} className="p-8 text-center text-muted-foreground">
-                        加载中...
-                      </td>
-                    </tr>
-                  ) : simulatesData.length === 0 ? (
-                    <tr>
-                      <td colSpan={6} className="p-8 text-center text-muted-foreground">
-                        暂无模拟任务
-                      </td>
-                    </tr>
-                  ) : (
-                    simulatesData.map(task => (
-                      <tr
-                        key={task.task_id}
-                        className={cn(
-                          'hover:bg-muted/30',
-                          selectedSimulates.has(task.task_id) && 'bg-primary/5'
-                        )}
-                      >
-                        <td className="p-3">
-                          <input
-                            type="checkbox"
-                            className="rounded"
-                            checked={selectedSimulates.has(task.task_id)}
-                            onChange={() => toggleSimulateSelect(task.task_id)}
-                          />
-                        </td>
-                        <td className="p-3 text-sm font-medium">{task.name || task.task_id}</td>
-                        <td className="p-3">
-                          <span
-                            className={cn(
-                              'px-2 py-1 rounded text-xs',
-                              (
-                                statusMap[task.status] || {
-                                  color: 'bg-muted text-muted-foreground',
-                                }
-                              ).color
-                            )}
-                          >
-                            {(statusMap[task.status] || { text: task.status }).text}
-                          </span>
-                        </td>
-                        <td className="p-3 text-sm">Step {task.current_step}/4</td>
-                        <td className="p-3 text-muted-foreground text-sm">
-                          {formatDate(task.created_at)}
-                        </td>
-                        <td className="p-3">
-                          <div className="flex items-center justify-end gap-1">
-                            <button
-                              className="p-2 hover:bg-muted rounded"
-                              title="查看"
-                              onClick={() => setSimulateDetail(task)}
-                            >
-                              <Eye className="h-4 w-4" />
-                            </button>
-                            <button
-                              className="p-2 hover:bg-destructive/10 text-destructive rounded"
-                              title="删除"
-                              onClick={() =>
-                                setConfirmAction({
-                                  title: '确认删除',
-                                  message: `删除任务「${task.task_id}」？`,
-                                  onConfirm: () => handleDeleteSimulate(task.task_id),
-                                })
-                              }
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-              <Pagination
-                page={simulatesPage}
-                total={simulatesTotal}
-                onPageChange={fetchSimulates}
-              />
-            </div>
-          </div>
-        )}
-
-        {/* --- 开标结果 Tab --- */}
-        {activeTab === 'openings' && (
-          <div>
-            {/* 批量操作栏 */}
-            {selectedOpenings.size > 0 && (
-              <div className="flex items-center gap-3 mb-4 p-3 rounded-lg bg-muted/50 border border-border">
-                <span className="text-sm">
-                  已选择 <strong>{selectedOpenings.size}</strong> 个开标结果
-                </span>
-                <button
-                  className="px-3 py-1.5 bg-primary text-primary-foreground rounded hover:bg-primary/90 text-sm flex items-center gap-1.5 disabled:opacity-50"
-                  onClick={handleBatchDownloadOpenings}
-                  disabled={batchDownloading}
-                >
-                  {batchDownloading ? (
-                    <span className="inline-block w-4 h-4 border-2 border-primary-foreground/30 border-t-primary-foreground rounded-full animate-spin" />
-                  ) : (
-                    <Archive className="h-4 w-4" />
-                  )}
-                  批量下载
-                </button>
-                <button
-                  className="px-3 py-1.5 bg-destructive text-destructive-foreground rounded hover:bg-destructive/90 text-sm flex items-center gap-1.5"
-                  onClick={handleBatchDeleteOpenings}
-                >
-                  <Trash2 className="h-4 w-4" />
-                  批量删除
-                </button>
-                <button
-                  className="px-3 py-1.5 border rounded hover:bg-muted text-sm"
-                  onClick={() => setSelectedOpenings(new Set())}
-                >
-                  取消选择
-                </button>
-              </div>
-            )}
-
-            <div className="rounded-xl border border-border overflow-hidden">
-              <table className="w-full">
-                <thead className="bg-muted/50">
-                  <tr>
-                    <th className="p-3 text-left font-semibold text-sm w-10">
-                      <input
-                        type="checkbox"
-                        className="rounded"
-                        checked={
-                          openingsData.length > 0 && selectedOpenings.size === openingsData.length
-                        }
-                        onChange={() => toggleAllOpeningSelect(openingsData.map(o => o.id))}
-                      />
-                    </th>
-                    <th className="p-3 text-left font-semibold text-sm">名称</th>
-                    <th className="p-3 text-left font-semibold text-sm">投标人数量</th>
-                    <th className="p-3 text-left font-semibold text-sm">创建时间</th>
-                    <th className="p-3 text-right font-semibold text-sm">操作</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y">
-                  {openingsLoading ? (
-                    <tr>
-                      <td colSpan={5} className="p-8 text-center text-muted-foreground">
-                        加载中...
-                      </td>
-                    </tr>
-                  ) : openingsData.length === 0 ? (
-                    <tr>
-                      <td colSpan={5} className="p-8 text-center text-muted-foreground">
-                        暂无开标结果
-                      </td>
-                    </tr>
-                  ) : (
-                    openingsData.map(result => (
-                      <tr
-                        key={result.id}
-                        className={cn(
-                          'hover:bg-muted/30',
-                          selectedOpenings.has(result.id) && 'bg-primary/5'
-                        )}
-                      >
-                        <td className="p-3">
-                          <input
-                            type="checkbox"
-                            className="rounded"
-                            checked={selectedOpenings.has(result.id)}
-                            onChange={() => toggleOpeningSelect(result.id)}
-                          />
-                        </td>
-                        <td className="p-3 text-sm font-medium">{result.name || result.id}</td>
-                        <td className="p-3">{result.bidder_count ?? '-'}</td>
-                        <td className="p-3 text-muted-foreground text-sm">
-                          {formatDate(result.created_at)}
-                        </td>
-                        <td className="p-3">
-                          <div className="flex items-center justify-end gap-1">
-                            <button
-                              className="p-2 hover:bg-muted rounded"
-                              title="查看"
-                              onClick={() => setOpeningDetail(result)}
-                            >
-                              <Eye className="h-4 w-4" />
-                            </button>
-                            <button
-                              className="p-2 hover:bg-destructive/10 text-destructive rounded"
-                              title="删除"
-                              onClick={() =>
-                                setConfirmAction({
-                                  title: '确认删除',
-                                  message: `删除开标结果「${result.id}」？`,
-                                  onConfirm: () => handleDeleteOpening(result.id),
-                                })
-                              }
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-              <Pagination page={openingsPage} total={openingsTotal} onPageChange={fetchOpenings} />
-            </div>
-          </div>
-        )}
-
-        {/* --- 提取结果 Tab --- */}
-        {activeTab === 'extracts' && (
-          <div>
-            {/* 批量操作栏 */}
-            {selectedExtracts.size > 0 && (
-              <div className="flex items-center gap-3 mb-4 p-3 rounded-lg bg-muted/50 border border-border">
-                <span className="text-sm">
-                  已选择 <strong>{selectedExtracts.size}</strong> 个提取结果
-                </span>
-                <button
-                  className="px-3 py-1.5 bg-primary text-primary-foreground rounded hover:bg-primary/90 text-sm flex items-center gap-1.5 disabled:opacity-50"
-                  onClick={handleBatchDownloadExtracts}
-                  disabled={batchDownloading}
-                >
-                  {batchDownloading ? (
-                    <span className="inline-block w-4 h-4 border-2 border-primary-foreground/30 border-t-primary-foreground rounded-full animate-spin" />
-                  ) : (
-                    <Archive className="h-4 w-4" />
-                  )}
-                  批量下载
-                </button>
-                <button
-                  className="px-3 py-1.5 bg-destructive text-destructive-foreground rounded hover:bg-destructive/90 text-sm flex items-center gap-1.5"
-                  onClick={handleBatchDeleteExtracts}
-                >
-                  <Trash2 className="h-4 w-4" />
-                  批量删除
-                </button>
-                <button
-                  className="px-3 py-1.5 border rounded hover:bg-muted text-sm"
-                  onClick={() => setSelectedExtracts(new Set())}
-                >
-                  取消选择
-                </button>
-              </div>
-            )}
-
-            <div className="rounded-xl border border-border overflow-hidden">
-              <table className="w-full">
-                <thead className="bg-muted/50">
-                  <tr>
-                    <th className="p-3 text-left font-semibold text-sm w-10">
-                      <input
-                        type="checkbox"
-                        className="rounded"
-                        checked={
-                          extractsData.length > 0 && selectedExtracts.size === extractsData.length
-                        }
-                        onChange={() => toggleAllExtractSelect(extractsData.map(e => e.id))}
-                      />
-                    </th>
-                    <th className="p-3 text-left font-semibold text-sm">名称</th>
-                    <th className="p-3 text-left font-semibold text-sm">模板类型</th>
-                    <th className="p-3 text-left font-semibold text-sm">模式</th>
-                    <th className="p-3 text-left font-semibold text-sm">创建时间</th>
-                    <th className="p-3 text-right font-semibold text-sm">操作</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y">
-                  {extractsLoading ? (
-                    <tr>
-                      <td colSpan={6} className="p-8 text-center text-muted-foreground">
-                        加载中...
-                      </td>
-                    </tr>
-                  ) : extractsData.length === 0 ? (
-                    <tr>
-                      <td colSpan={6} className="p-8 text-center text-muted-foreground">
-                        暂无提取结果
-                      </td>
-                    </tr>
-                  ) : (
-                    extractsData.map(result => (
-                      <tr
-                        key={result.id}
-                        className={cn(
-                          'hover:bg-muted/30',
-                          selectedExtracts.has(result.id) && 'bg-primary/5'
-                        )}
-                      >
-                        <td className="p-3">
-                          <input
-                            type="checkbox"
-                            className="rounded"
-                            checked={selectedExtracts.has(result.id)}
-                            onChange={() => toggleExtractSelect(result.id)}
-                          />
-                        </td>
-                        <td className="p-3 text-sm font-medium">{result.name || result.id}</td>
-                        <td className="p-3">
-                          <span className="px-2 py-1 rounded text-xs bg-muted text-muted-foreground">
-                            {result.template_type}
-                          </span>
-                        </td>
-                        <td className="p-3">
-                          <span className="px-2 py-1 rounded text-xs bg-primary/10 text-primary">
-                            {result.mode}
-                          </span>
-                        </td>
-                        <td className="p-3 text-muted-foreground text-sm">
-                          {formatDate(result.created_at)}
-                        </td>
-                        <td className="p-3">
-                          <div className="flex items-center justify-end gap-1">
-                            <button
-                              className="p-2 hover:bg-muted rounded"
-                              title="查看"
-                              onClick={() => setExtractDetail(result)}
-                            >
-                              <Eye className="h-4 w-4" />
-                            </button>
-                            <button
-                              className="p-2 hover:bg-primary/10 text-primary rounded"
-                              title="下载 MD"
-                              onClick={() => {
-                                const blob = new Blob([result.content], {
-                                  type: 'text/markdown;charset=utf-8',
-                                });
-                                const url = URL.createObjectURL(blob);
-                                const a = document.createElement('a');
-                                a.href = url;
-                                a.download = `extract_${result.id}_${result.template_type}.md`;
-                                document.body.appendChild(a);
-                                a.click();
-                                URL.revokeObjectURL(url);
-                                document.body.removeChild(a);
-                              }}
-                            >
-                              <Download className="h-4 w-4" />
-                            </button>
-                            <button
-                              className="p-2 hover:bg-destructive/10 text-destructive rounded"
-                              title="删除"
-                              onClick={() =>
-                                setConfirmAction({
-                                  title: '确认删除',
-                                  message: `删除提取结果「${result.id}」？`,
-                                  onConfirm: () => handleDeleteExtract(result.id),
-                                })
-                              }
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-              <Pagination page={extractsPage} total={extractsTotal} onPageChange={fetchExtracts} />
-            </div>
-          </div>
-        )}
-
-        {/* --- 确认删除弹窗 --- */}
         {confirmAction && (
-          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-            <div className="bg-card rounded-lg p-6 max-w-sm w-full shadow-lg">
-              <h3 className="text-lg font-semibold mb-2">{confirmAction.title}</h3>
-              <p className="text-muted-foreground mb-4">{confirmAction.message}</p>
-              <div className="flex items-center justify-end gap-3">
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+            <div className="w-full max-w-sm rounded-2xl bg-card p-6 shadow-lg">
+              <h3 className="text-lg font-semibold text-foreground">{confirmAction.title}</h3>
+              <p className="mt-2 text-sm leading-6 text-muted-foreground">
+                {confirmAction.message}
+              </p>
+              <div className="mt-6 flex items-center justify-end gap-3">
                 <button
-                  className="px-4 py-2 border rounded hover:bg-muted"
+                  className="rounded-full border border-border px-4 py-2 text-sm hover:bg-muted"
                   onClick={() => setConfirmAction(null)}
                 >
                   取消
                 </button>
                 <button
-                  className="px-4 py-2 bg-destructive text-destructive-foreground rounded hover:bg-destructive/90"
+                  className="rounded-full bg-destructive px-4 py-2 text-sm text-destructive-foreground hover:bg-destructive/90"
                   onClick={() => {
                     confirmAction.onConfirm();
                     setConfirmAction(null);
@@ -1365,427 +1366,11 @@ export default function DatabasePage() {
             </div>
           </div>
         )}
-
-        {/* --- 文件详情弹窗 --- */}
-        {fileDetail && (
-          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-            <div className="bg-card rounded-lg max-w-2xl w-full shadow-lg overflow-hidden">
-              <div className="flex items-center justify-between p-4 border-b">
-                <h3 className="text-lg font-semibold">文件详情</h3>
-                <button className="p-2 hover:bg-muted rounded" onClick={() => setFileDetail(null)}>
-                  <X className="h-5 w-5" />
-                </button>
-              </div>
-              <div className="p-4 space-y-3">
-                <div className="grid grid-cols-2 gap-3 text-sm">
-                  <div>
-                    <span className="text-muted-foreground">ID：</span>
-                    {fileDetail.id}
-                  </div>
-                  <div>
-                    <span className="text-muted-foreground">文件名：</span>
-                    {fileDetail.original_name}
-                  </div>
-                  <div>
-                    <span className="text-muted-foreground">大小：</span>
-                    {formatSize(fileDetail.size)}
-                  </div>
-                  <div>
-                    <span className="text-muted-foreground">类型：</span>
-                    <span
-                      className={cn(
-                        'px-2 py-1 rounded text-xs',
-                        fileTypeColor[fileDetail.type] || 'bg-muted'
-                      )}
-                    >
-                      {fileDetail.type}
-                    </span>
-                  </div>
-                  <div className="col-span-2">
-                    <span className="text-muted-foreground">上传时间：</span>
-                    {formatDate(fileDetail.created_at)}
-                  </div>
-                </div>
-              </div>
-              <div className="flex items-center justify-end gap-3 p-4 border-t">
-                <button
-                  className="px-4 py-2 bg-primary text-primary-foreground rounded hover:bg-primary/90 flex items-center gap-2"
-                  onClick={() => handleDownloadFile(fileDetail)}
-                >
-                  <Download className="h-4 w-4" />
-                  下载文件
-                </button>
-                <button
-                  className="px-4 py-2 border rounded hover:bg-muted flex items-center gap-2"
-                  onClick={() => window.open(previewFileUrl(fileDetail.id), '_blank')}
-                >
-                  <Eye className="h-4 w-4" />
-                  预览
-                </button>
-                <button
-                  className="px-4 py-2 border rounded hover:bg-muted"
-                  onClick={() => setFileDetail(null)}
-                >
-                  关闭
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* --- 模拟任务详情弹窗 --- */}
-        {simulateDetail && (
-          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-            <div className="bg-card rounded-lg max-w-3xl w-full shadow-lg overflow-hidden">
-              <div className="flex items-center justify-between p-4 border-b">
-                <h3 className="text-lg font-semibold">模拟任务详情</h3>
-                <button
-                  className="p-2 hover:bg-muted rounded"
-                  onClick={() => setSimulateDetail(null)}
-                >
-                  <X className="h-5 w-5" />
-                </button>
-              </div>
-              <div className="p-4 space-y-3 overflow-y-auto max-h-[60vh]">
-                <div className="grid grid-cols-2 gap-3 text-sm">
-                  <div>
-                    <span className="text-muted-foreground">任务ID：</span>
-                    {simulateDetail.task_id}
-                  </div>
-                  <div>
-                    <span className="text-muted-foreground">状态：</span>
-                    <span
-                      className={cn(
-                        'px-2 py-1 rounded text-xs',
-                        (
-                          statusMap[simulateDetail.status] || {
-                            color: 'bg-muted',
-                          }
-                        ).color
-                      )}
-                    >
-                      {simulateDetail.status}
-                    </span>
-                  </div>
-                  <div>
-                    <span className="text-muted-foreground">当前步骤：</span>
-                    Step {simulateDetail.current_step}/4
-                  </div>
-                  <div>
-                    <span className="text-muted-foreground">创建时间：</span>
-                    {formatDate(simulateDetail.created_at)}
-                  </div>
-                  <div className="col-span-2">
-                    <span className="text-muted-foreground">关联文件：</span>
-                    {(simulateDetail.files || []).map(f => f.original_name).join('、') || '-'}
-                  </div>
-                </div>
-
-                {/* 步骤结果 */}
-                {Object.entries(simulateDetail.step_results || {}).map(([key, val]) => (
-                  <div key={key} className="rounded-xl border border-border p-3">
-                    <span className="px-2 py-1 rounded text-xs bg-primary/10 text-primary mb-2 inline-block">
-                      {key === 'step1'
-                        ? 'Step 1: PDF转换'
-                        : key === 'step2'
-                          ? 'Step 2: 要素提取'
-                          : key === 'step3'
-                            ? 'Step 3: 对比分析'
-                            : 'Step 4: 模拟编制'}
-                    </span>
-                    <pre className="text-xs mt-2 whitespace-pre-wrap max-h-48 overflow-auto">
-                      {typeof val === 'string' ? val : JSON.stringify(val, null, 2)}
-                    </pre>
-                  </div>
-                ))}
-              </div>
-              <div className="flex items-center justify-end gap-3 p-4 border-t">
-                <button
-                  className="px-4 py-2 bg-primary text-primary-foreground rounded hover:bg-primary/90 flex items-center gap-2"
-                  onClick={() => {
-                    const lines = Object.entries(simulateDetail.step_results || {}).map(
-                      ([key, val]) => {
-                        const label =
-                          key === 'step1'
-                            ? 'Step 1: PDF转换'
-                            : key === 'step2'
-                              ? 'Step 2: 要素提取'
-                              : key === 'step3'
-                                ? 'Step 3: 对比分析'
-                                : 'Step 4: 模拟编制';
-                        const content =
-                          typeof val === 'string' ? val : JSON.stringify(val, null, 2);
-                        return `## ${label}\n\n${content}`;
-                      }
-                    );
-                    const md = `# 模拟任务 ${simulateDetail.task_id}\n\n${lines.join('\n\n')}`;
-                    const blob = new Blob([md], { type: 'text/markdown;charset=utf-8' });
-                    downloadBlob(blob, `simulate_${simulateDetail.task_id}.md`);
-                  }}
-                >
-                  <Download className="h-4 w-4" />
-                  下载结果
-                </button>
-                <button
-                  className="px-4 py-2 border rounded hover:bg-muted"
-                  onClick={() => setSimulateDetail(null)}
-                >
-                  关闭
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* --- 开标结果详情弹窗 --- */}
-        {openingDetail && (
-          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-            <div className="bg-card rounded-lg max-w-3xl w-full shadow-lg overflow-hidden">
-              <div className="flex items-center justify-between p-4 border-b">
-                <h3 className="text-lg font-semibold">开标结果详情</h3>
-                <button
-                  className="p-2 hover:bg-muted rounded"
-                  onClick={() => setOpeningDetail(null)}
-                >
-                  <X className="h-5 w-5" />
-                </button>
-              </div>
-              <div className="p-4 space-y-4 overflow-y-auto max-h-[60vh]">
-                <div className="grid grid-cols-2 gap-3 text-sm">
-                  <div>
-                    <span className="text-muted-foreground">ID：</span>
-                    {openingDetail.id}
-                  </div>
-                  <div>
-                    <span className="text-muted-foreground">投标人数量：</span>
-                    {openingDetail.bidder_count ?? '-'}
-                  </div>
-                </div>
-
-                {/* 投标价排名 */}
-                {openingDetail.bid_ranking && (
-                  <div>
-                    <h4 className="font-semibold mb-2">投标价排名</h4>
-                    <table className="w-full rounded-xl border border-border overflow-hidden text-sm">
-                      <thead className="bg-muted/50">
-                        <tr>
-                          <th className="p-2 text-left font-semibold">排名</th>
-                          <th className="p-2 text-left font-semibold">投标人</th>
-                          <th className="p-2 text-right font-semibold">投标价</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y">
-                        {openingDetail.bid_ranking.map(item => (
-                          <tr key={item.rank} className="hover:bg-muted/30">
-                            <td className="p-2">{item.rank}</td>
-                            <td className="p-2">{item.name}</td>
-                            <td className="p-2 text-right">¥{item.price.toLocaleString()}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-
-                {/* 统计指标 */}
-                {openingDetail.bid_stats && (
-                  <div>
-                    <h4 className="font-semibold mb-2">统计指标</h4>
-                    <div className="grid grid-cols-3 gap-3">
-                      {[
-                        { label: '均值', value: openingDetail.bid_stats.mean, unit: '¥' },
-                        {
-                          label: '标准差',
-                          value:
-                            (openingDetail.bid_stats as any).std_dev ??
-                            (openingDetail.bid_stats as any).std,
-                          unit: '',
-                        },
-                        { label: '离散系数', value: openingDetail.bid_stats.cv, unit: '%' },
-                        { label: '最小值', value: openingDetail.bid_stats.min, unit: '¥' },
-                        { label: '最大值', value: openingDetail.bid_stats.max, unit: '¥' },
-                        { label: '极差', value: openingDetail.bid_stats.range, unit: '¥' },
-                      ].map(({ label, value, unit }) => (
-                        <div
-                          key={label}
-                          className="rounded-xl border border-border p-3 text-center"
-                        >
-                          <p className="text-sm text-muted-foreground">{label}</p>
-                          <p className="text-lg font-semibold">
-                            {typeof value === 'number'
-                              ? `${unit}${value.toLocaleString()}`
-                              : (value ?? '-')}
-                          </p>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* AI 综合分析 */}
-                {(openingDetail as any).ai_analysis && (
-                  <div className="mt-4">
-                    <h4 className="font-semibold mb-2">AI 综合分析</h4>
-                    <div className="rounded-xl border border-border p-4 max-h-[400px] overflow-auto bg-muted/20">
-                      <pre className="whitespace-pre-wrap text-sm">
-                        {(openingDetail as any).ai_analysis}
-                      </pre>
-                    </div>
-                  </div>
-                )}
-              </div>
-              <div className="flex items-center justify-end gap-3 p-4 border-t">
-                <button
-                  className="px-4 py-2 bg-primary text-primary-foreground rounded hover:bg-primary/90 flex items-center gap-2"
-                  onClick={() => {
-                    const d = openingDetail;
-                    const meta = d.meta || {};
-                    const stats = d.bid_stats || ({} as any);
-                    const lines = [
-                      `# 开标分析报告`,
-                      ``,
-                      `- 项目名称: ${meta.project_name || d.id}`,
-                      `- 项目编号: ${meta.bid_number || '-'}`,
-                      `- 投标人数量: ${d.bidder_count || '?'}`,
-                      `- 分析时间: ${d.created_at || '-'}`,
-                    ];
-                    if (meta.max_price)
-                      lines.push(`- 最高限价: ¥${meta.max_price.toLocaleString()}`);
-                    if (meta.benchmark_price)
-                      lines.push(`- 评标基准价: ¥${meta.benchmark_price.toLocaleString()}`);
-
-                    if (d.bid_ranking?.length) {
-                      lines.push(``, `## 投标价排名`, ``);
-                      lines.push(`| 排名 | 投标人 | 报价(万元) |`, '|------|--------|----------|');
-                      for (const r of d.bid_ranking) {
-                        lines.push(`| ${r.rank} | ${r.name} | ¥${r.price.toLocaleString()} |`);
-                      }
-                    }
-
-                    if (stats.mean !== undefined) {
-                      lines.push(``, `## 统计指标`, ``);
-                      lines.push(`| 指标 | 值 |`, '|------|-----|');
-                      lines.push(`| 均值 | ¥${stats.mean.toLocaleString()} |`);
-                      const sd = (stats as any).std_dev ?? (stats as any).std;
-                      if (sd !== undefined) lines.push(`| 标准差 | ${sd} |`);
-                      if (stats.cv !== undefined)
-                        lines.push(
-                          `| 离散系数 | ${stats.cv}% (${(stats as any).cv_level || '-'}) |`
-                        );
-                      lines.push(`| 最小值 | ¥${stats.min?.toLocaleString()} |`);
-                      lines.push(`| 最大值 | ¥${stats.max?.toLocaleString()} |`);
-                      if (stats.range !== undefined)
-                        lines.push(`| 极差 | ¥${stats.range.toLocaleString()} |`);
-                    }
-
-                    const discount = (d as any).discount_results;
-                    if (discount?.length) {
-                      lines.push(``, `## 降价分析`, ``);
-                      for (const r of discount) {
-                        lines.push(`- ${r.name}: 降幅 ${r.discount_pct}% (${r.strategy})`);
-                      }
-                    }
-
-                    if ((d as any).ai_analysis) {
-                      lines.push(``, `## AI 综合分析`, ``, (d as any).ai_analysis);
-                    }
-
-                    const blob = new Blob([lines.join('\n')], {
-                      type: 'text/markdown;charset=utf-8',
-                    });
-                    downloadBlob(blob, `opening_${d.id}.md`);
-                  }}
-                >
-                  <Download className="h-4 w-4" />
-                  下载报告
-                </button>
-                <button
-                  className="px-4 py-2 border rounded hover:bg-muted"
-                  onClick={() => setOpeningDetail(null)}
-                >
-                  关闭
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* --- 提取结果详情弹窗 --- */}
-        {extractDetail && (
-          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-            <div className="bg-card rounded-lg max-w-2xl w-full shadow-lg overflow-hidden">
-              <div className="flex items-center justify-between p-4 border-b">
-                <h3 className="text-lg font-semibold">提取结果详情</h3>
-                <button
-                  className="p-2 hover:bg-muted rounded"
-                  onClick={() => setExtractDetail(null)}
-                >
-                  <X className="h-5 w-5" />
-                </button>
-              </div>
-              <div className="p-4 space-y-3 overflow-y-auto max-h-[60vh]">
-                <div className="grid grid-cols-2 gap-3 text-sm">
-                  <div>
-                    <span className="text-muted-foreground">ID：</span>
-                    {extractDetail.id}
-                  </div>
-                  <div>
-                    <span className="text-muted-foreground">模板类型：</span>
-                    <span className="px-2 py-1 rounded text-xs bg-muted text-muted-foreground">
-                      {extractDetail.template_type}
-                    </span>
-                  </div>
-                  <div>
-                    <span className="text-muted-foreground">模式：</span>
-                    <span className="px-2 py-1 rounded text-xs bg-primary/10 text-primary">
-                      {extractDetail.mode}
-                    </span>
-                  </div>
-                  <div>
-                    <span className="text-muted-foreground">创建时间：</span>
-                    {formatDate(extractDetail.created_at)}
-                  </div>
-                </div>
-
-                {/* 提取内容 */}
-                <div>
-                  <h4 className="font-semibold mb-2">提取内容</h4>
-                  <div className="rounded-xl border border-border p-6 max-h-96 overflow-auto">
-                    <pre className="whitespace-pre-wrap text-sm">{extractDetail.content}</pre>
-                  </div>
-                </div>
-              </div>
-              <div className="flex items-center justify-end gap-3 p-4 border-t">
-                <button
-                  className="px-4 py-2 bg-primary text-primary-foreground rounded hover:bg-primary/90 flex items-center gap-2"
-                  onClick={() => {
-                    const blob = new Blob([extractDetail.content], {
-                      type: 'text/markdown;charset=utf-8',
-                    });
-                    const url = URL.createObjectURL(blob);
-                    const a = document.createElement('a');
-                    a.href = url;
-                    a.download = `extract_${extractDetail.id}_${extractDetail.template_type}.md`;
-                    document.body.appendChild(a);
-                    a.click();
-                    URL.revokeObjectURL(url);
-                    document.body.removeChild(a);
-                  }}
-                >
-                  <Download className="h-4 w-4" />
-                  下载 MD
-                </button>
-                <button
-                  className="px-4 py-2 border rounded hover:bg-muted"
-                  onClick={() => setExtractDetail(null)}
-                >
-                  关闭
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
       </div>
     </WorkbenchLayout>
   );
+}
+
+function generateExtractMarkdown(result: ExtractResultRecord): string {
+  return result.content || '';
 }

@@ -33,6 +33,9 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/statistics", tags=["statistics"])
 
+OPENING_IDLE_TIMEOUT_SECONDS = 4.0
+OPENING_MAX_IDLE_TICKS = 8
+
 
 def _extract_number(text: str):
     """从文本中提取第一个数字。"""
@@ -887,18 +890,50 @@ async def start_comprehensive_analysis(
             ]
 
             result_text = ""
-            try:
-                async def _do_stream():
-                    nonlocal result_text
-                    async for chunk in llm_service.llm.complete(provider, messages, model=model, stream=True, user_id=user_id, temperature=0.3):
-                        result_text += chunk
+            chunk_queue: asyncio.Queue = asyncio.Queue()
+            logger.info("开标综合分析开始: task_id=%s provider=%s model=%s", task_id, provider, model or "default")
 
-                await asyncio.wait_for(_do_stream(), timeout=180)
-                await update_opening(task_id, {"ai_analysis": result_text or _fallback_opening_analysis(analysis_data), "status": "completed"})
-            except asyncio.TimeoutError:
-                await update_opening(task_id, {"ai_analysis": result_text or _fallback_opening_analysis(analysis_data), "status": "completed"})
+            async def _llm_stream():
+                nonlocal result_text
+                first_chunk = True
+                async for chunk in llm_service.llm.complete(provider, messages, model=model, stream=True, user_id=user_id, temperature=0.3):
+                    if first_chunk:
+                        logger.info("开标综合分析收到首个模型输出: task_id=%s", task_id)
+                        first_chunk = False
+                    result_text += chunk
+                    await chunk_queue.put(chunk)
+
+            stream_task = asyncio.create_task(_llm_stream())
+            idle_ticks = 0
+            try:
+                while True:
+                    if stream_task.done() and chunk_queue.empty():
+                        error = stream_task.exception()
+                        if error:
+                            raise error
+                        break
+                    try:
+                        await asyncio.wait_for(chunk_queue.get(), timeout=OPENING_IDLE_TIMEOUT_SECONDS)
+                        idle_ticks = 0
+                    except asyncio.TimeoutError:
+                        idle_ticks += 1
+                        logger.info("开标综合分析等待模型输出: task_id=%s idle_ticks=%s", task_id, idle_ticks)
+                        if idle_ticks < OPENING_MAX_IDLE_TICKS:
+                            continue
+                        logger.warning("开标综合分析模型长时间无输出，使用兜底报告: task_id=%s partial_length=%s", task_id, len(result_text))
+                        if not stream_task.done():
+                            stream_task.cancel()
+                            import contextlib
+                            with contextlib.suppress(asyncio.CancelledError):
+                                await stream_task
+                        break
+
+                final_text = result_text.strip() or _fallback_opening_analysis(analysis_data)
+                await update_opening(task_id, {"ai_analysis": final_text, "status": "completed"})
+                logger.info("开标综合分析已保存: task_id=%s length=%s", task_id, len(final_text))
             except Exception:
-                await update_opening(task_id, {"ai_analysis": result_text or _fallback_opening_analysis(analysis_data), "status": "completed"})
+                logger.exception("开标综合分析失败，使用兜底报告: task_id=%s partial_length=%s", task_id, len(result_text))
+                await update_opening(task_id, {"ai_analysis": result_text.strip() or _fallback_opening_analysis(analysis_data), "status": "completed"})
 
         asyncio.create_task(_run_llm())
 
@@ -957,6 +992,7 @@ async def start_comprehensive_analysis_upload(
 
         async def _run_llm():
             llm_service = LLMService()
+            provider_name = provider or "deepseek"
 
             prompt_builder = get_prompt_builder()
             statistics_json = json.dumps(analysis_data, ensure_ascii=False, indent=2)
@@ -967,20 +1003,50 @@ async def start_comprehensive_analysis_upload(
             ]
 
             result_text = ""
-            try:
-                async def _do_stream():
-                    nonlocal result_text
-                    async for chunk in llm_service.llm.complete(provider or "deepseek", messages, model=model, stream=True, user_id=user_id, temperature=0.3):
-                        result_text += chunk
+            chunk_queue: asyncio.Queue = asyncio.Queue()
+            logger.info("开标综合分析开始: task_id=%s provider=%s model=%s", task_id, provider_name, model or "default")
 
-                await asyncio.wait_for(_do_stream(), timeout=180)
-                await update_opening(task_id, {"ai_analysis": result_text or _fallback_opening_analysis(analysis_data), "status": "completed"})
-            except asyncio.TimeoutError as e:
-                logger.warning("开标综合分析超时，使用兜底报告: task_id=%s", task_id)
-                await update_opening(task_id, {"ai_analysis": result_text or _fallback_opening_analysis(analysis_data), "status": "completed"})
-            except Exception as e:
-                logger.exception("开标综合分析失败，使用兜底报告: task_id=%s", task_id)
-                await update_opening(task_id, {"ai_analysis": result_text or _fallback_opening_analysis(analysis_data), "status": "completed"})
+            async def _llm_stream():
+                nonlocal result_text
+                first_chunk = True
+                async for chunk in llm_service.llm.complete(provider_name, messages, model=model, stream=True, user_id=user_id, temperature=0.3):
+                    if first_chunk:
+                        logger.info("开标综合分析收到首个模型输出: task_id=%s", task_id)
+                        first_chunk = False
+                    result_text += chunk
+                    await chunk_queue.put(chunk)
+
+            stream_task = asyncio.create_task(_llm_stream())
+            idle_ticks = 0
+            try:
+                while True:
+                    if stream_task.done() and chunk_queue.empty():
+                        error = stream_task.exception()
+                        if error:
+                            raise error
+                        break
+                    try:
+                        await asyncio.wait_for(chunk_queue.get(), timeout=OPENING_IDLE_TIMEOUT_SECONDS)
+                        idle_ticks = 0
+                    except asyncio.TimeoutError:
+                        idle_ticks += 1
+                        logger.info("开标综合分析等待模型输出: task_id=%s idle_ticks=%s", task_id, idle_ticks)
+                        if idle_ticks < OPENING_MAX_IDLE_TICKS:
+                            continue
+                        logger.warning("开标综合分析模型长时间无输出，使用兜底报告: task_id=%s partial_length=%s", task_id, len(result_text))
+                        if not stream_task.done():
+                            stream_task.cancel()
+                            import contextlib
+                            with contextlib.suppress(asyncio.CancelledError):
+                                await stream_task
+                        break
+
+                final_text = result_text.strip() or _fallback_opening_analysis(analysis_data)
+                await update_opening(task_id, {"ai_analysis": final_text, "status": "completed"})
+                logger.info("开标综合分析已保存: task_id=%s length=%s", task_id, len(final_text))
+            except Exception:
+                logger.exception("开标综合分析失败，使用兜底报告: task_id=%s partial_length=%s", task_id, len(result_text))
+                await update_opening(task_id, {"ai_analysis": result_text.strip() or _fallback_opening_analysis(analysis_data), "status": "completed"})
 
         asyncio.create_task(_run_llm())
 

@@ -16,6 +16,7 @@ import {
 import { cn } from '@/lib/utils';
 import { authFetch, authFetchSSE } from '@/lib/auth-fetch';
 import { WorkbenchLayout } from '@/components/layout/WorkbenchLayout';
+import { ResizableSplit } from '@/components/layout/ResizableSplit';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { TaskProgress } from '@/components/ui/TaskProgress';
 import { MarkdownPreview } from '@/components/ui/MarkdownPreview';
@@ -428,7 +429,11 @@ export default function SimulatePage() {
                   setSimPhase('completing');
                   setSimPercentage(100);
                   stopProgressTimer();
-                  setStreamContent(prev => prev + `\n${event.data?.summary || '步骤完成'}\n`);
+                  if (event.data?.content) {
+                    setStreamContent(event.data.content);
+                  } else {
+                    setStreamContent(prev => prev + `\n${event.data?.summary || '步骤完成'}\n`);
+                  }
                 } else if (event.type === 'error') {
                   setStreamContent(prev => prev + `\n❌ 错误: ${event.data?.message}\n`);
                 }
@@ -547,8 +552,10 @@ export default function SimulatePage() {
       <div className="w-full space-y-6">
         <PageHeader title="模拟编制" description="四步引导式生成模拟招标文件" />
 
-        <div className="grid grid-cols-1 gap-8 xl:grid-cols-[minmax(420px,500px)_minmax(0,1fr)] xl:items-start">
-          <div className="space-y-5">
+        <ResizableSplit
+          storageKey="simulate-split-width"
+          left={(
+            <div className="space-y-5">
             {!task && (
               <>
                 <input
@@ -812,8 +819,9 @@ export default function SimulatePage() {
               </div>
             )}
           </div>
-
-          <aside className="rounded-2xl border border-border bg-card shadow-sm xl:sticky xl:top-6">
+          )}
+          right={(
+            <aside className="rounded-2xl border border-border bg-card shadow-sm xl:sticky xl:top-6">
             <div className="flex items-start justify-between gap-4 border-b border-border px-5 py-4">
               <div>
                 <h2 className="text-xl font-semibold text-foreground">输出预览</h2>
@@ -903,7 +911,8 @@ export default function SimulatePage() {
               )}
             </div>
           </aside>
-        </div>
+          )}
+        />
       </div>
     </WorkbenchLayout>
   );

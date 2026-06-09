@@ -36,7 +36,7 @@ const workspaceNav = [
   {
     title: '系统工具',
     items: [
-      { href: '/database', label: '数据管理', icon: Database },
+      { href: '/database', label: '文件管理', icon: Database },
       { href: '/settings', label: 'AI 设置', icon: Settings },
       { href: '/logs', label: '系统日志', icon: ScrollText },
     ],

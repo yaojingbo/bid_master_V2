@@ -29,6 +29,7 @@ import {
 import { cn } from '@/lib/utils';
 import { authFetch } from '@/lib/auth-fetch';
 import { WorkbenchLayout } from '@/components/layout/WorkbenchLayout';
+import { ResizableSplit } from '@/components/layout/ResizableSplit';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { useSettingsStore } from '@/stores/settings-store';
 import { TaskProgress } from '@/components/ui/TaskProgress';
@@ -633,8 +634,10 @@ export default function StatisticsPage() {
           description="智能解析开标一览表，自动计算报价排名、降价幅度、离散系数"
         />
 
-        <div className="grid grid-cols-1 gap-8 xl:grid-cols-[minmax(420px,500px)_minmax(0,1fr)] xl:items-start">
-          <div className="space-y-5">
+        <ResizableSplit
+          storageKey="statistics-split-width"
+          left={(
+            <div className="space-y-5">
             {/* 文件上传 */}
             <input
               type="file"
@@ -1367,8 +1370,9 @@ export default function StatisticsPage() {
               </div>
             )}
           </div>
-
-          <aside className="rounded-2xl border border-border bg-card shadow-sm xl:sticky xl:top-6">
+          )}
+          right={(
+            <aside className="rounded-2xl border border-border bg-card shadow-sm xl:sticky xl:top-6">
             <div className="flex items-start justify-between gap-4 border-b border-border px-5 py-4">
               <div>
                 <h2 className="text-xl font-semibold text-foreground">输出预览</h2>
@@ -1467,7 +1471,8 @@ export default function StatisticsPage() {
               )}
             </div>
           </aside>
-        </div>
+          )}
+        />
       </div>
     </WorkbenchLayout>
   );

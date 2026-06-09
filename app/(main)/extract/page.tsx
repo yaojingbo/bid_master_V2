@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { WorkbenchLayout } from '@/components/layout/WorkbenchLayout';
+import { ResizableSplit } from '@/components/layout/ResizableSplit';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { TabNavigation } from '@/components/ui/TabNavigation';
 import { TaskProgress } from '@/components/ui/TaskProgress';
@@ -318,8 +319,10 @@ export default function ExtractPage() {
       <div className="w-full space-y-6">
         <PageHeader title="要素提取" description="上传招标文件，AI 按用户要求自动提取关键要素" />
 
-        <div className="grid grid-cols-1 gap-8 xl:grid-cols-[minmax(420px,500px)_minmax(0,1fr)] xl:items-start">
-          <div className="space-y-5">
+        <ResizableSplit
+          storageKey="extract-split-width"
+          left={(
+            <div className="space-y-5">
             {/* Tab 导航 */}
             <TabNavigation tabs={tabs} activeTab={activeTab} onTabChange={setActiveTab} />
 
@@ -643,8 +646,9 @@ export default function ExtractPage() {
               </div>
             )}
           </div>
-
-          <aside className="rounded-2xl border border-border bg-card shadow-sm xl:sticky xl:top-6">
+          )}
+          right={(
+            <aside className="rounded-2xl border border-border bg-card shadow-sm xl:sticky xl:top-6">
             <div className="flex items-start justify-between gap-4 border-b border-border px-5 py-4">
               <div>
                 <h2 className="text-xl font-semibold text-foreground">输出预览</h2>
@@ -766,7 +770,8 @@ export default function ExtractPage() {
               )}
             </div>
           </aside>
-        </div>
+          )}
+        />
       </div>
     </WorkbenchLayout>
   );

@@ -494,7 +494,7 @@ interface ExportButtonProps {
 - [x] `/extract` - 要素提取
 - [ ] `/simulate` - **需完善四步引导**
 - [ ] `/statistics` - **需完善 Excel 解析展示**
-- [x] `/database` - 数据管理
+- [x] `/database` - 文件管理
 - [ ] `/settings` - **需完善 ProviderSelector 等组件**
 
 ### Step 10: 前端组件

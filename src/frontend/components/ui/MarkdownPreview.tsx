@@ -14,6 +14,11 @@ const renderMarkdownInline = (text: string) =>
     .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
     .replace(/\*([^*]+)\*/g, '<em>$1</em>');
 
+const isChineseSectionTitle = (text: string) =>
+  /^(第[一二三四五六七八九十]+[章节条部分]|[一二三四五六七八九十]+[、.．]|（[一二三四五六七八九十]+）|\([一二三四五六七八九十]+\))\s*[^：:]{2,40}$/.test(text);
+
+const isFieldLine = (text: string) => /^[一-龥A-Za-z0-9_\-/（）()\s]{2,24}[：:].+/.test(text);
+
 const splitTableRow = (line: string) =>
   line
     .trim()
@@ -89,6 +94,21 @@ const renderMarkdown = (text: string) => {
       continue;
     }
 
+    if (isChineseSectionTitle(trimmed)) {
+      closeParagraph();
+      closeList();
+      html.push(`<h2>${renderMarkdownInline(trimmed.replace(/^[一二三四五六七八九十]+[、.．]\s*/, ''))}</h2>`);
+      continue;
+    }
+
+    if (isFieldLine(trimmed)) {
+      closeParagraph();
+      closeList();
+      const [label, ...rest] = trimmed.split(/[：:]/);
+      html.push(`<p><strong>${renderMarkdownInline(label)}：</strong>${renderMarkdownInline(rest.join('：').trim())}</p>`);
+      continue;
+    }
+
     const blockquote = trimmed.match(/^>\s+(.+)$/);
     if (blockquote) {
       closeParagraph();
@@ -131,5 +151,5 @@ const renderMarkdown = (text: string) => {
 };
 
 export function MarkdownPreview({ content }: { content: string }) {
-  return <div dangerouslySetInnerHTML={{ __html: renderMarkdown(content) }} />;
+  return <div className="markdown-body" dangerouslySetInnerHTML={{ __html: renderMarkdown(content) }} />;
 }

@@ -6,12 +6,18 @@ Simulate Service - 模拟编制服务（4步流程）
 import asyncio
 import io
 import json
+import logging
 import uuid
 from typing import Optional, AsyncGenerator, Dict, Any
 from dataclasses import dataclass, field
 
 from app.infrastructure.pg_storage import add_simulate, update_simulate, get_file, calculate_content_hash, find_completed_extract
 from app.services.extract_service import _format_extract_result
+
+logger = logging.getLogger(__name__)
+
+STEP4_IDLE_TIMEOUT_SECONDS = 4.0
+STEP4_MAX_IDLE_TICKS = 8
 
 
 def _fallback_simulate_result(step: int, source: str, params: dict | None = None) -> str:
@@ -429,6 +435,7 @@ class SimulateService:
             raise ValueError(f"Task {task_id} not found")
 
         yield {"type": "progress", "message": "正在生成模拟投标文件...", "phase": "connecting", "percentage": 5}
+        logger.info("模拟编制 Step4 开始: task_id=%s provider=%s model=%s", task_id, provider, model or "default")
 
         task.params = params
 
@@ -455,16 +462,22 @@ class SimulateService:
 
         async def _llm_bg():
             try:
+                first_chunk = True
                 async for chunk in llm.llm.complete(provider, messages, stream=True, user_id=user_id, model=model):
+                    if first_chunk:
+                        logger.info("模拟编制 Step4 收到首个模型输出: task_id=%s", task_id)
+                        first_chunk = False
                     result_holder["text"] += chunk
                     await chunk_queue.put({"type": "content", "content": chunk})
                 result_holder["done"] = True
+                logger.info("模拟编制 Step4 模型流结束: task_id=%s length=%s", task_id, len(result_holder["text"]))
                 await chunk_queue.put({"type": "llm_done"})
             except Exception as e:
+                logger.exception("模拟编制 Step4 模型调用异常: task_id=%s", task_id)
                 await chunk_queue.put({"type": "llm_error", "error": str(e)})
 
         async def _save_step4_result():
-            task.step4_result = result_holder["text"]
+            task.step4_result = result_holder["text"].strip()
             task.current_step = 4
             task.status = "completed"
             await update_simulate(task_id, {
@@ -477,6 +490,7 @@ class SimulateService:
                     "step4": task.step4_result,
                 },
             })
+            logger.info("模拟编制 Step4 已保存: task_id=%s length=%s", task_id, len(task.step4_result))
 
         bg_task = asyncio.create_task(_llm_bg())
 
@@ -484,39 +498,47 @@ class SimulateService:
             idle_ticks = 0
             while True:
                 try:
-                    event = await asyncio.wait_for(chunk_queue.get(), timeout=5.0)
+                    event = await asyncio.wait_for(chunk_queue.get(), timeout=STEP4_IDLE_TIMEOUT_SECONDS)
                     idle_ticks = 0
                 except asyncio.TimeoutError:
                     idle_ticks += 1
-                    yield {"type": "llm_progress", "message": "正在组装模拟投标文件...", "phase": "generating", "percentage": 70}
-                    if idle_ticks < 12:
+                    logger.info("模拟编制 Step4 等待模型输出: task_id=%s idle_ticks=%s", task_id, idle_ticks)
+                    yield {"type": "llm_progress", "message": "正在组装模拟投标文件...", "phase": "generating", "percentage": 82}
+                    if idle_ticks < STEP4_MAX_IDLE_TICKS:
                         continue
+                    logger.warning("模拟编制 Step4 模型长时间无输出，启用兜底结果: task_id=%s partial_length=%s", task_id, len(result_holder["text"]))
                     result_holder["text"] = result_holder["text"].strip() or _fallback_simulate_result(4, task.step3_result, params)
                     await _save_step4_result()
                     _saved = True
+                    if not bg_task.done():
+                        bg_task.cancel()
+                        import contextlib
+                        with contextlib.suppress(asyncio.CancelledError):
+                            await bg_task
                     yield {"type": "content", "content": result_holder["text"]}
-                    yield {"type": "done", "data": {"summary": "模拟编制完成"}, "phase": "completing", "percentage": 100}
+                    yield {"type": "done", "data": {"summary": "模拟编制完成", "content": task.step4_result}, "phase": "completing", "percentage": 100}
                     break
 
                 if event["type"] == "content":
-                    yield {"type": "llm_progress", "message": "正在组装模拟投标文件...", "phase": "generating", "percentage": 70}
+                    yield {"type": "llm_progress", "message": "正在组装模拟投标文件...", "phase": "generating", "percentage": 82}
                     yield event
                 elif event["type"] == "llm_done":
                     await _save_step4_result()
                     _saved = True
-                    yield {"type": "done", "data": {"summary": "模拟编制完成"}, "phase": "completing", "percentage": 100}
+                    yield {"type": "done", "data": {"summary": "模拟编制完成", "content": task.step4_result}, "phase": "completing", "percentage": 100}
                     break
                 elif event["type"] == "llm_error":
+                    logger.warning("模拟编制 Step4 收到模型错误: task_id=%s error=%s partial_length=%s", task_id, event.get("error"), len(result_holder["text"]))
                     if result_holder["text"].strip():
                         await _save_step4_result()
                         _saved = True
-                        yield {"type": "done", "data": {"summary": "模拟编制完成"}, "phase": "completing", "percentage": 100}
+                        yield {"type": "done", "data": {"summary": "模拟编制完成", "content": task.step4_result}, "phase": "completing", "percentage": 100}
                     else:
                         result_holder["text"] = _fallback_simulate_result(4, task.step3_result, params)
                         await _save_step4_result()
                         _saved = True
                         yield {"type": "content", "content": result_holder["text"]}
-                        yield {"type": "done", "data": {"summary": "模拟编制完成"}, "phase": "completing", "percentage": 100}
+                        yield {"type": "done", "data": {"summary": "模拟编制完成", "content": task.step4_result}, "phase": "completing", "percentage": 100}
                     break
         finally:
             if not _saved:

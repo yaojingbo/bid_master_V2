@@ -2,45 +2,10 @@
 
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
-import {
-  BarChart3,
-  BookOpen,
-  Crown,
-  Database,
-  FileSearch,
-  FileText,
-  Home,
-  LogIn,
-  ScrollText,
-  Settings,
-  Sparkles,
-  Terminal,
-  Upload,
-} from 'lucide-react';
+import { BarChart3, BookOpen, FileSearch, FileText, Sparkles, Terminal, Upload } from 'lucide-react';
+import { WorkbenchLayout } from '@/components/layout/WorkbenchLayout';
 import { getStats, type DataStats } from '@/lib/data-api';
 import { useSettingsStore } from '@/stores/settings-store';
-
-const workspaceNav = [
-  {
-    title: '招标文件处理',
-    items: [
-      { href: '/extract', label: '要素提取', icon: FileSearch },
-      { href: '/simulate', label: '模拟编制', icon: FileText },
-    ],
-  },
-  {
-    title: '开标数据分析',
-    items: [{ href: '/statistics', label: '开标分析', icon: BarChart3 }],
-  },
-  {
-    title: '系统工具',
-    items: [
-      { href: '/database', label: '数据管理', icon: Database },
-      { href: '/settings', label: 'AI 设置', icon: Settings },
-      { href: '/logs', label: '系统日志', icon: ScrollText },
-    ],
-  },
-];
 
 const actionCards = [
   {
@@ -107,62 +72,8 @@ export default function WorkbenchPage() {
   );
 
   return (
-    <div className="mx-auto flex max-w-none gap-8 px-0">
-      <aside className="flex min-h-[calc(100vh-10rem)] w-56 shrink-0 flex-col border-r border-border pr-4">
-        <div className="mb-8 px-2">
-          <p className="text-xl font-bold tracking-tight text-primary">Bid Master</p>
-        </div>
-
-        <nav className="flex-1 space-y-6">
-          <Link
-            href="/"
-            className="flex h-10 items-center gap-2 rounded-2xl bg-primary/10 px-3 text-sm font-semibold text-primary"
-          >
-            <Home className="h-4 w-4" />
-            首页
-          </Link>
-
-          {workspaceNav.map(group => (
-            <div key={group.title}>
-              <p className="mb-2 px-3 text-xs font-medium text-muted-foreground">{group.title}</p>
-              <div className="space-y-1">
-                {group.items.map(item => (
-                  <Link
-                    key={item.href}
-                    href={item.href}
-                    className="flex h-10 items-center gap-2 rounded-2xl px-3 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                  >
-                    <item.icon className="h-4 w-4" />
-                    {item.label}
-                  </Link>
-                ))}
-              </div>
-            </div>
-          ))}
-        </nav>
-
-        <div className="space-y-4 px-3 pt-8">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">
-                游
-              </div>
-              <span className="text-sm font-medium text-foreground">游客</span>
-            </div>
-            <Settings className="h-4 w-4 text-muted-foreground" />
-          </div>
-          <Link href="/register" className="flex items-center gap-2 text-sm font-medium text-primary">
-            <Crown className="h-4 w-4" />
-            注册账号
-          </Link>
-          <Link href="/login" className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground">
-            <LogIn className="h-4 w-4" />
-            退出登录
-          </Link>
-        </div>
-      </aside>
-
-      <main className="min-w-0 flex-1 space-y-6">
+    <WorkbenchLayout>
+      <div className="min-w-0 flex-1 space-y-6">
         <h1 className="text-2xl font-bold tracking-tight text-foreground">工作台</h1>
 
         <div className="flex items-center justify-between rounded-2xl border border-primary/20 bg-primary/5 px-5 py-3 text-[13px] text-foreground">
@@ -246,7 +157,7 @@ export default function WorkbenchPage() {
             ))}
           </div>
         </section>
-      </main>
-    </div>
+      </div>
+    </WorkbenchLayout>
   );
 }
