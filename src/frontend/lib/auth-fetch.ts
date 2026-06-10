@@ -27,6 +27,12 @@ function waitForAuthReady(): Promise<void> {
   });
 }
 
+function redirectToLogin() {
+  if (typeof window === "undefined") return;
+  const callbackUrl = `${window.location.pathname}${window.location.search}`;
+  window.location.href = `/login?callbackUrl=${encodeURIComponent(callbackUrl)}`;
+}
+
 export async function authFetch(url: string, options?: RequestInit): Promise<Response> {
   // 若 token 尚未就绪，等待 initAuth 完成
   const { accessToken: initialToken } = useAuthStore.getState();
@@ -87,7 +93,7 @@ export async function authFetch(url: string, options?: RequestInit): Promise<Res
       // 避免 middleware 因残留 refresh_token cookie 导致重定向循环
       if (typeof window !== "undefined") {
         await fetch("/api/auth/logout", { method: "POST", credentials: "include" }).catch(() => {});
-        window.location.href = "/login";
+        redirectToLogin();
       }
     }
     return response;
@@ -156,7 +162,7 @@ export async function authFetchSSE(url: string, options?: RequestInit): Promise<
       useAuthStore.getState().logout();
       if (typeof window !== "undefined") {
         await fetch("/api/auth/logout", { method: "POST", credentials: "include" }).catch(() => {});
-        window.location.href = "/login";
+        redirectToLogin();
       }
     }
     return response;

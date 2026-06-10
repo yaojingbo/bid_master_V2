@@ -21,9 +21,11 @@ import { PageHeader } from '@/components/layout/PageHeader';
 import { TaskProgress } from '@/components/ui/TaskProgress';
 import { MarkdownPreview } from '@/components/ui/MarkdownPreview';
 import { useFileUpload } from '@/hooks/useFileUpload';
+import { useRequireAuth } from '@/hooks/useRequireAuth';
 import { useFileStore } from '@/stores/file-store';
 import { useTaskStore } from '@/stores/task-store';
 import { useSettingsStore } from '@/stores/settings-store';
+import { useAuthStore } from '@/stores/auth-store';
 import { listFiles } from '@/lib/data-api';
 
 // 4 步流程定义
@@ -120,6 +122,8 @@ const toTaskData = (data: any): TaskData => ({
 });
 
 export default function SimulatePage() {
+  const requireAuth = useRequireAuth();
+  const { authReady, isAuthenticated } = useAuthStore();
   const { activeProvider, activeModel } = useSettingsStore();
   const [task, setTask] = useState<TaskData | null>(null);
   const [uploadingFile, setUploadingFile] = useState<string | null>(null);
@@ -189,6 +193,7 @@ export default function SimulatePage() {
   // 页面挂载时：恢复状态 + 刷新后端任务数据
   const hasRestored = useRef(false);
   useEffect(() => {
+    if (!authReady || !isAuthenticated) return;
     if (hasRestored.current) return;
     hasRestored.current = true;
 
@@ -259,13 +264,14 @@ export default function SimulatePage() {
         // API 失败，清除残留数据
         useTaskStore.getState().clearSimulate();
       });
-  }, []);
+  }, [authReady, isAuthenticated]);
 
   const { upload } = useFileUpload();
   const { files, removeFile, addFile } = useFileStore();
   const [selectedFileIds, setSelectedFileIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
+    if (!authReady || !isAuthenticated) return;
     const backendIds: string[] = [];
     listFiles({ page: 1, page_size: 50 })
       .then(res => {
@@ -286,7 +292,7 @@ export default function SimulatePage() {
       .catch(() => {
         // 静默失败，页面仍可上传新文件
       });
-  }, [addFile]);
+  }, [addFile, authReady, isAuthenticated]);
 
   // 页面加载时默认全选
   useEffect(() => {
@@ -298,6 +304,10 @@ export default function SimulatePage() {
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    if (!requireAuth()) {
+      e.target.value = '';
+      return;
+    }
     setUploadingFile(file.name);
     await upload(file);
     e.target.value = '';
@@ -323,6 +333,7 @@ export default function SimulatePage() {
   const handleDrop = async (e: React.DragEvent) => {
     e.preventDefault();
     setIsDragging(false);
+    if (!requireAuth()) return;
     const file = e.dataTransfer.files[0];
     if (!file) return;
     setUploadingFile(file.name);
@@ -336,6 +347,7 @@ export default function SimulatePage() {
   };
 
   const handleCreateTask = async () => {
+    if (!requireAuth()) return;
     const fileIds = [...selectedFileIds];
     if (fileIds.length === 0) return;
 
@@ -355,6 +367,7 @@ export default function SimulatePage() {
   };
 
   const streamStep = async (stepNum: number, body?: Record<string, unknown>) => {
+    if (!requireAuth()) return;
     if (!task) return;
     setStreamContent('');
     setIsStreaming(true);
@@ -533,6 +546,7 @@ export default function SimulatePage() {
   };
 
   const handleClearTask = async () => {
+    if (!requireAuth()) return;
     if (!task) return;
     try {
       await authFetch(`/api/simulate/${task.taskId}`, { method: 'DELETE' });

@@ -1,6 +1,5 @@
 'use client';
 
-import { useSearchParams } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Archive,
@@ -42,7 +41,9 @@ import {
   exportExtractJson,
   deleteExtract as apiDeleteExtract,
 } from '@/lib/data-api';
+import { useRequireAuth } from '@/hooks/useRequireAuth';
 import { useFileStore } from '@/stores/file-store';
+import { useAuthStore } from '@/stores/auth-store';
 import type {
   DataStats,
   FileRecord,
@@ -189,12 +190,10 @@ const getDetailTitle = (detail: DetailRecord) => {
 };
 
 export default function DatabasePage() {
-  const searchParams = useSearchParams();
-  const initialTab = (searchParams.get('tab') as DataTab | null) || 'files';
-  const [activeTab, setActiveTab] = useState<DataTab>(
-    tabs.some(t => t.key === initialTab) ? initialTab : 'files'
-  );
-  const [loadedTabs, setLoadedTabs] = useState<Set<DataTab>>(new Set([initialTab]));
+  const requireAuth = useRequireAuth();
+  const { authReady, isAuthenticated } = useAuthStore();
+  const [activeTab, setActiveTab] = useState<DataTab>('files');
+  const [loadedTabs, setLoadedTabs] = useState<Set<DataTab>>(new Set(['files']));
   const [stats, setStats] = useState<DataStats>(emptyStats);
   const [searchKeyword, setSearchKeyword] = useState('');
   const [fileTypeFilter, setFileTypeFilter] = useState('');
@@ -292,20 +291,23 @@ export default function DatabasePage() {
   }, []);
 
   useEffect(() => {
+    if (!authReady || !isAuthenticated) return;
     loadStats();
     if (activeTab === 'files') fetchFiles();
     if (activeTab === 'extracts') fetchExtracts();
     if (activeTab === 'simulates') fetchSimulates();
     if (activeTab === 'openings') fetchOpenings();
-  }, [activeTab, fetchExtracts, fetchFiles, fetchOpenings, fetchSimulates, loadStats]);
+  }, [activeTab, authReady, fetchExtracts, fetchFiles, fetchOpenings, fetchSimulates, isAuthenticated, loadStats]);
 
   useEffect(() => {
+    if (!authReady || !isAuthenticated) return;
     if (activeTab === 'files') fetchFiles();
-  }, [activeTab, fetchFiles, fileTypeFilter]);
+  }, [activeTab, authReady, fetchFiles, fileTypeFilter, isAuthenticated]);
 
   useEffect(() => {
+    if (!authReady || !isAuthenticated) return;
     if (activeTab === 'simulates') fetchSimulates();
-  }, [activeTab, fetchSimulates, statusFilter]);
+  }, [activeTab, authReady, fetchSimulates, isAuthenticated, statusFilter]);
 
   const handleTabChange = (key: DataTab) => {
     setActiveTab(key);
@@ -387,6 +389,7 @@ export default function DatabasePage() {
           : openingsLoading;
 
   const handleDownloadFile = async (file: FileRecord) => {
+    if (!requireAuth()) return;
     setDownloadingId(file.id);
     setDownloadError(null);
     try {
@@ -400,6 +403,7 @@ export default function DatabasePage() {
   };
 
   const handleExportExtractJson = async (result: ExtractResultRecord) => {
+    if (!requireAuth()) return;
     setDownloadingId(result.id);
     setDownloadError(null);
     try {
@@ -431,6 +435,7 @@ export default function DatabasePage() {
   };
 
   const handleBatchDownloadFiles = async () => {
+    if (!requireAuth()) return;
     if (selectedFiles.size === 0) return;
     setBatchDownloading(true);
     setDownloadError(null);
@@ -446,6 +451,7 @@ export default function DatabasePage() {
   };
 
   const handleBatchDeleteFiles = async () => {
+    if (!requireAuth()) return;
     if (selectedFiles.size === 0) return;
     for (const fileId of selectedFiles) {
       try {
@@ -521,6 +527,7 @@ export default function DatabasePage() {
   };
 
   const handleBatchDeleteResults = async () => {
+    if (!requireAuth()) return;
     if (activeTab === 'extracts') {
       for (const id of selectedExtracts) {
         try {
@@ -561,6 +568,7 @@ export default function DatabasePage() {
     ['md', 'markdown', 'txt', 'csv'].includes((file.type || '').toLowerCase());
 
   const loadFilePreviewText = async (file: FileRecord) => {
+    if (!requireAuth()) return '';
     if (filePreviewText[file.id]) return filePreviewText[file.id];
     setFilePreviewLoadingId(file.id);
     setDownloadError(null);
@@ -599,6 +607,7 @@ export default function DatabasePage() {
   };
 
   const handleDownloadDetail = (record: DetailRecord) => {
+    if (!requireAuth()) return;
     if (record.type === 'files') {
       handleDownloadFile(record.record);
       return;
@@ -613,6 +622,7 @@ export default function DatabasePage() {
   };
 
   const handleDelete = async (record: DetailRecord) => {
+    if (!requireAuth()) return;
     if (record.type === 'files') {
       await apiDeleteFile(record.record.id);
       useFileStore.getState().removeFile(record.record.id);
@@ -636,6 +646,7 @@ export default function DatabasePage() {
   };
 
   const handleBatchDownload = async () => {
+    if (!requireAuth()) return;
     const zip = new JSZip();
     if (activeTab === 'files') return;
     if (activeTab === 'extracts') {
@@ -664,11 +675,13 @@ export default function DatabasePage() {
   };
 
   const openPreview = (record: DetailRecord) => {
+    if (!requireAuth()) return;
     setMarkdownMode(false);
     setQuickPreview(record);
   };
 
   const openMarkdownPreview = async (record: DetailRecord) => {
+    if (!requireAuth()) return;
     setQuickPreview(record);
     await handleMarkdownClick(record);
   };

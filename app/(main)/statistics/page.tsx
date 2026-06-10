@@ -36,8 +36,10 @@ import { TaskProgress } from '@/components/ui/TaskProgress';
 import { MarkdownPreview } from '@/components/ui/MarkdownPreview';
 import { getModulesFromColumns } from './column-module-map';
 import { useFileUpload } from '@/hooks/useFileUpload';
+import { useRequireAuth } from '@/hooks/useRequireAuth';
 import { useFileStore } from '@/stores/file-store';
 import { useTaskStore } from '@/stores/task-store';
+import { useAuthStore } from '@/stores/auth-store';
 
 interface AvailableModule {
   key: string;
@@ -140,6 +142,8 @@ interface AnalysisResult {
 }
 
 export default function StatisticsPage() {
+  const requireAuth = useRequireAuth();
+  const { authReady, isAuthenticated } = useAuthStore();
   const [selectAllModules, setSelectAllModules] = useState(false);
   const [availableModules, setAvailableModules] = useState<AvailableModule[]>([]);
   const [selectedModules, setSelectedModules] = useState<string[]>([]);
@@ -216,6 +220,7 @@ export default function StatisticsPage() {
 
   // 页面挂载时：恢复上次的分析结果和 AI 内容
   useEffect(() => {
+    if (!authReady || !isAuthenticated) return;
     const saved = useTaskStore.getState().statistics;
     if (!saved) return;
 
@@ -241,7 +246,7 @@ export default function StatisticsPage() {
     if (saved.aiContent && !saved.aiStreaming) {
       setActiveTab('comprehensive');
     }
-  }, []);
+  }, [authReady, isAuthenticated]);
 
   const pollAnalysisTask = useCallback((taskId: string) => {
     let attempts = 0;
@@ -376,6 +381,10 @@ export default function StatisticsPage() {
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    if (!requireAuth()) {
+      e.target.value = '';
+      return;
+    }
     uploadedFileRef.current = file;
     e.target.value = '';
 
@@ -434,6 +443,7 @@ export default function StatisticsPage() {
   const handleDrop = async (e: React.DragEvent) => {
     e.preventDefault();
     setIsDragging(false);
+    if (!requireAuth()) return;
     const file = e.dataTransfer.files[0];
     if (!file) return;
     uploadedFileRef.current = file;
@@ -480,6 +490,7 @@ export default function StatisticsPage() {
   const [parseError, setParseError] = useState<string | null>(null);
 
   const handleAnalyze = async (modulesOverride?: string[]) => {
+    if (!requireAuth()) return;
     if (!uploadedFile) return;
     const modulesToUse = modulesOverride || selectedModules;
     if (modulesToUse.length === 0) return;
@@ -543,6 +554,7 @@ export default function StatisticsPage() {
   };
 
   const handleComprehensive = async () => {
+    if (!requireAuth()) return;
     if (!result || !uploadedFile) return;
 
     setAiContent('');

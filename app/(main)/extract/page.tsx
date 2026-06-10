@@ -22,7 +22,9 @@ import { TabNavigation } from '@/components/ui/TabNavigation';
 import { TaskProgress } from '@/components/ui/TaskProgress';
 import { MarkdownPreview } from '@/components/ui/MarkdownPreview';
 import { useFileUpload } from '@/hooks/useFileUpload';
+import { useRequireAuth } from '@/hooks/useRequireAuth';
 import { useFileStore } from '@/stores/file-store';
+import { useAuthStore } from '@/stores/auth-store';
 import { useSettingsStore } from '@/stores/settings-store';
 import { mockFiles } from '@/data/mock/providers';
 import { listFiles } from '@/lib/data-api';
@@ -87,6 +89,8 @@ const isRealReadyFile = (file: { id: string; status: string }) =>
   file.status === 'ready' && !file.id.startsWith('temp-');
 
 export default function ExtractPage() {
+  const requireAuth = useRequireAuth();
+  const { authReady, isAuthenticated } = useAuthStore();
   const [activeTab, setActiveTab] = useState('single');
   const [selectedFileId, setSelectedFileId] = useState<string | null>(null);
   const [selectedFileIds, setSelectedFileIds] = useState<string[]>([]);
@@ -141,6 +145,7 @@ export default function ExtractPage() {
 
   // 从后端加载真实文件列表
   useEffect(() => {
+    if (!authReady || !isAuthenticated) return;
     listFiles({ page: 1, page_size: 50 })
       .then(res => {
         const backendIds: string[] = [];
@@ -163,12 +168,16 @@ export default function ExtractPage() {
       .catch(() => {
         /* 静默失败，显示空列表 */
       });
-  }, [addFile]);
+  }, [addFile, authReady, isAuthenticated]);
 
   const displayFiles = (files.length > 0 ? files : mockFiles).filter(isRealReadyFile);
 
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    if (!requireAuth()) {
+      e.target.value = '';
+      return;
+    }
     if (file) {
       await upload(file);
       e.target.value = '';
@@ -188,6 +197,7 @@ export default function ExtractPage() {
   const handleDrop = async (e: React.DragEvent) => {
     e.preventDefault();
     setIsDragging(false);
+    if (!requireAuth()) return;
     const file = e.dataTransfer.files[0];
     if (file) await upload(file);
   };
@@ -225,6 +235,7 @@ export default function ExtractPage() {
   };
 
   const handleExtract = async () => {
+    if (!requireAuth()) return;
     if (!selectedFileId) return;
     resetExtractionState();
     runExtractTask({
@@ -249,6 +260,7 @@ export default function ExtractPage() {
   };
 
   const handleBatchExtract = async () => {
+    if (!requireAuth()) return;
     if (selectedFileIds.length < 2) return;
     resetExtractionState();
     runExtractTask({
@@ -266,6 +278,7 @@ export default function ExtractPage() {
   };
 
   const handleThresholdExtract = async () => {
+    if (!requireAuth()) return;
     if (!selectedFileId || !thresholdText.trim()) return;
     resetExtractionState();
     runExtractTask({
