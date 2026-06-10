@@ -46,13 +46,11 @@ async function proxyAuthRequest(
   const action = segments.join("/");
   const url = `${BACKEND}/api/auth/${action}`;
 
-  // 构建转发 headers
   const fwdHeaders: Record<string, string> = {};
 
   const auth = request.headers.get("Authorization");
   if (auth) fwdHeaders["Authorization"] = auth;
 
-  // refresh 请求：转发浏览器发来的 refresh_token cookie
   if (action === "refresh") {
     const token = request.cookies.get("refresh_token")?.value;
     if (token) fwdHeaders["Cookie"] = `refresh_token=${token}`;
@@ -69,49 +67,56 @@ async function proxyAuthRequest(
     }
   }
 
-  const backendRes = await fetch(url, { method, headers: fwdHeaders, body });
-  const data = await backendRes.json();
+  try {
+    const backendRes = await fetch(url, { method, headers: fwdHeaders, body });
+    const contentType = backendRes.headers.get("Content-Type") || "application/json";
+    const text = await backendRes.text();
+    const data = text ? JSON.parse(text) : {};
 
-  // 登录/注册：提取 refresh_token 并设置为 httpOnly cookie
-  if (action === "login" || action === "register") {
-    // 优先从响应体提取（最可靠），回退到 Set-Cookie header
-    const tokenValue = extractRefreshTokenFromBody(data)
-      || extractRefreshTokenFromHeaders(backendRes.headers);
+    if (action === "login" || action === "register") {
+      const tokenValue = extractRefreshTokenFromBody(data)
+        || extractRefreshTokenFromHeaders(backendRes.headers);
 
-    // 从响应体中移除 refresh_token，防止暴露给前端 JS
-    const sanitizedData = { ...data };
-    delete sanitizedData.refresh_token;
+      const sanitizedData = { ...data };
+      delete sanitizedData.refresh_token;
 
-    const res = NextResponse.json(sanitizedData, { status: backendRes.status });
+      const res = NextResponse.json(sanitizedData, { status: backendRes.status });
 
-    if (tokenValue) {
-      res.cookies.set("refresh_token", tokenValue, {
+      if (tokenValue) {
+        res.cookies.set("refresh_token", tokenValue, {
+          httpOnly: true,
+          secure: IS_PRODUCTION,
+          sameSite: "lax",
+          path: "/",
+          maxAge: REFRESH_COOKIE_MAX_AGE,
+        });
+      } else {
+        console.error("[auth-proxy] login/register 响应中未找到 refresh_token，无法设置 cookie");
+      }
+      return res;
+    }
+
+    const res = new NextResponse(text, {
+      status: backendRes.status,
+      headers: { "Content-Type": contentType },
+    });
+
+    if (action === "logout") {
+      res.cookies.set("refresh_token", "", {
         httpOnly: true,
         secure: IS_PRODUCTION,
         sameSite: "lax",
         path: "/",
-        maxAge: REFRESH_COOKIE_MAX_AGE,
+        maxAge: 0,
       });
-    } else {
-      console.error("[auth-proxy] login/register 响应中未找到 refresh_token，无法设置 cookie");
     }
+
     return res;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "未知错误";
+    console.error("[auth-proxy] 后端请求失败", { action, backend: BACKEND, message });
+    return NextResponse.json({ detail: `后端服务不可用: ${message}` }, { status: 502 });
   }
-
-  const res = NextResponse.json(data, { status: backendRes.status });
-
-  // logout：清除 refresh_token cookie
-  if (action === "logout") {
-    res.cookies.set("refresh_token", "", {
-      httpOnly: true,
-      secure: IS_PRODUCTION,
-      sameSite: "lax",
-      path: "/",
-      maxAge: 0,
-    });
-  }
-
-  return res;
 }
 
 export async function POST(
