@@ -23,6 +23,7 @@ const navItems = [
   { href: '/workbench', label: '功能', icon: FileSearch },
   { href: '/cli', label: 'CLI', icon: Terminal },
   { href: '/database', label: '文件管理', icon: Settings },
+  { href: '/settings', label: 'AI 设置', icon: Settings },
 ];
 
 export function Sidebar() {
