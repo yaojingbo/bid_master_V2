@@ -53,12 +53,16 @@ async function proxyRequest(request: NextRequest, segments: string[]) {
     const disposition = backendRes.headers.get("Content-Disposition");
     if (disposition) responseHeaders.set("Content-Disposition", disposition);
 
-    return new Response(backendRes.body, {
+    const payload = await backendRes.arrayBuffer();
+
+    return new Response(payload, {
       status: backendRes.status,
       headers: responseHeaders,
     });
-  } catch {
-    return new Response(JSON.stringify({ detail: "后端服务不可用" }), {
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "未知错误";
+    console.error("[api-proxy] 后端请求失败", { path, backend: BACKEND, message });
+    return new Response(JSON.stringify({ detail: `后端服务不可用: ${message}` }), {
       status: 502,
       headers: { "Content-Type": "application/json" },
     });
