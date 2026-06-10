@@ -191,6 +191,18 @@ async function readSSEStream(response: Response) {
         }
       }
     }
+
+    buffer += decoder.decode();
+    for (const line of buffer.split('\n')) {
+      if (!line.startsWith('data: ')) continue;
+      try {
+        const event = JSON.parse(line.slice(6));
+        if (event.type === 'done') receivedDone = true;
+        processEvent(event);
+      } catch {
+        // 跳过无法解析的流片段
+      }
+    }
   } catch {
     if (!receivedDone) {
       stopProgressTimer();

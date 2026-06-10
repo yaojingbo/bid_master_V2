@@ -12,7 +12,13 @@ from typing import Optional, AsyncGenerator, Dict, Any
 from dataclasses import dataclass, field
 
 from app.infrastructure.pg_storage import add_simulate, update_simulate, get_file, calculate_content_hash, find_completed_extract
-from app.services.extract_service import _format_extract_result
+from app.services.extract_service import (
+    _elements_from_plain_text,
+    _format_extract_result,
+    _normalize_elements,
+    _parse_llm_json_response,
+)
+from app.services.prompt_builder import ELEMENT_NAMES
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +26,28 @@ STEP3_IDLE_TIMEOUT_SECONDS = 4.0
 STEP3_MAX_IDLE_TICKS = 8
 STEP4_IDLE_TIMEOUT_SECONDS = 4.0
 STEP4_MAX_IDLE_TICKS = 8
+
+
+def _format_step2_elements(raw_text: str) -> str:
+    selected_names = list(ELEMENT_NAMES.values())
+    try:
+        _, elements = _parse_llm_json_response(raw_text)
+        normalized = _normalize_elements(elements, raw_text, selected_names)
+    except json.JSONDecodeError:
+        normalized = _elements_from_plain_text(raw_text, selected_names)
+
+    if not normalized:
+        return raw_text.strip()
+
+    return "\n\n".join(
+        f"## {element.get('name') or '要素'}\n{element.get('content') or ''}".strip()
+        for element in normalized
+        if isinstance(element, dict)
+    ).strip()
+
+
+def _next_running_percentage(current: int, ceiling: int) -> int:
+    return min(current + 1, ceiling)
 
 
 def _fallback_simulate_result(step: int, source: str, params: dict | None = None) -> str:
@@ -260,7 +288,7 @@ class SimulateService:
                 await chunk_queue.put({"type": "llm_error", "error": str(e)})
 
         async def _save_step2_result(status: str = "step3_compare", current_step: int = 2):
-            task.step2_result = result_holder["text"]
+            task.step2_result = _format_step2_elements(result_holder["text"])
             task.current_step = current_step
             task.status = status
             await update_simulate(task_id, {
@@ -273,13 +301,15 @@ class SimulateService:
 
         try:
             idle_ticks = 0
+            running_percentage = 70
             while True:
                 try:
                     event = await asyncio.wait_for(chunk_queue.get(), timeout=5.0)
                     idle_ticks = 0
                 except asyncio.TimeoutError:
                     idle_ticks += 1
-                    yield {"type": "llm_progress", "message": "AI 正在提取要素...", "phase": "generating", "percentage": 70}
+                    running_percentage = _next_running_percentage(running_percentage, 88)
+                    yield {"type": "llm_progress", "message": "AI 正在提取要素...", "phase": "generating", "percentage": running_percentage}
                     if idle_ticks < 12:
                         continue
                     result_holder["text"] = result_holder["text"].strip() or _fallback_simulate_result(2, combined_text)
@@ -290,7 +320,8 @@ class SimulateService:
                     break
 
                 if event["type"] == "content":
-                    yield {"type": "llm_progress", "message": "正在解析要素...", "phase": "generating", "percentage": 70}
+                    running_percentage = _next_running_percentage(running_percentage, 88)
+                    yield {"type": "llm_progress", "message": "正在解析要素...", "phase": "generating", "percentage": running_percentage}
                     yield event
                 elif event["type"] == "llm_done":
                     await _save_step2_result()
@@ -379,6 +410,7 @@ class SimulateService:
 
         try:
             idle_ticks = 0
+            running_percentage = 82
             while True:
                 try:
                     event = await asyncio.wait_for(chunk_queue.get(), timeout=STEP3_IDLE_TIMEOUT_SECONDS)
@@ -386,7 +418,8 @@ class SimulateService:
                 except asyncio.TimeoutError:
                     idle_ticks += 1
                     logger.info("模拟编制 Step3 等待模型输出: task_id=%s idle_ticks=%s", task_id, idle_ticks)
-                    yield {"type": "llm_progress", "message": "AI 正在对比分析...", "phase": "generating", "percentage": 82}
+                    running_percentage = _next_running_percentage(running_percentage, 92)
+                    yield {"type": "llm_progress", "message": "AI 正在对比分析...", "phase": "generating", "percentage": running_percentage}
                     if idle_ticks < STEP3_MAX_IDLE_TICKS:
                         continue
                     logger.warning("模拟编制 Step3 模型长时间无输出，启用兜底结果: task_id=%s partial_length=%s", task_id, len(result_holder["text"]))
@@ -403,7 +436,8 @@ class SimulateService:
                     break
 
                 if event["type"] == "content":
-                    yield {"type": "llm_progress", "message": "正在对比分析...", "phase": "generating", "percentage": 82}
+                    running_percentage = _next_running_percentage(running_percentage, 92)
+                    yield {"type": "llm_progress", "message": "正在对比分析...", "phase": "generating", "percentage": running_percentage}
                     yield event
                 elif event["type"] == "llm_done":
                     await _save_step3_result()
@@ -505,6 +539,7 @@ class SimulateService:
 
         try:
             idle_ticks = 0
+            running_percentage = 82
             while True:
                 try:
                     event = await asyncio.wait_for(chunk_queue.get(), timeout=STEP4_IDLE_TIMEOUT_SECONDS)
@@ -512,7 +547,8 @@ class SimulateService:
                 except asyncio.TimeoutError:
                     idle_ticks += 1
                     logger.info("模拟编制 Step4 等待模型输出: task_id=%s idle_ticks=%s", task_id, idle_ticks)
-                    yield {"type": "llm_progress", "message": "正在组装模拟投标文件...", "phase": "generating", "percentage": 82}
+                    running_percentage = _next_running_percentage(running_percentage, 92)
+                    yield {"type": "llm_progress", "message": "正在组装模拟投标文件...", "phase": "generating", "percentage": running_percentage}
                     if idle_ticks < STEP4_MAX_IDLE_TICKS:
                         continue
                     logger.warning("模拟编制 Step4 模型长时间无输出，启用兜底结果: task_id=%s partial_length=%s", task_id, len(result_holder["text"]))
@@ -529,7 +565,8 @@ class SimulateService:
                     break
 
                 if event["type"] == "content":
-                    yield {"type": "llm_progress", "message": "正在组装模拟投标文件...", "phase": "generating", "percentage": 82}
+                    running_percentage = _next_running_percentage(running_percentage, 92)
+                    yield {"type": "llm_progress", "message": "正在组装模拟投标文件...", "phase": "generating", "percentage": running_percentage}
                     yield event
                 elif event["type"] == "llm_done":
                     await _save_step4_result()

@@ -77,8 +77,12 @@ const getStepProgressState = (runningStep: number | null, percentage: number | n
   };
 };
 
-const getStepResult = (task: TaskData | null) => {
+const getStepResult = (task: TaskData | null, runningStep: number | null = null) => {
   if (!task) return '';
+  if (runningStep === 1) return task.step1Result;
+  if (runningStep === 2) return task.step2Result;
+  if (runningStep === 3) return task.step3Result;
+  if (runningStep === 4) return task.step4Result;
   return task.step4Result || task.step3Result || task.step2Result || task.step1Result || '';
 };
 
@@ -386,6 +390,8 @@ export default function SimulatePage() {
         throw new Error(`HTTP ${res.status}`);
       }
 
+      let finalContent = '';
+
       // Check if this is SSE or JSON
       const contentType = res.headers.get('content-type') || '';
       if (contentType.includes('text/event-stream')) {
@@ -430,6 +436,7 @@ export default function SimulatePage() {
                   setSimPercentage(100);
                   stopProgressTimer();
                   if (event.data?.content) {
+                    finalContent = event.data.content;
                     setStreamContent(event.data.content);
                   } else {
                     setStreamContent(prev => prev + `\n${event.data?.summary || '步骤完成'}\n`);
@@ -459,8 +466,8 @@ export default function SimulatePage() {
 
       stopProgressTimer();
       const nextTask = await refreshTask();
-      if (nextTask) {
-        setStreamContent('');
+      if (nextTask && finalContent) {
+        setStreamContent(finalContent);
       }
       setIsStreaming(false);
       setRunningStep(null);
@@ -538,7 +545,7 @@ export default function SimulatePage() {
     useTaskStore.getState().clearSimulate();
   };
 
-  const resultContent = isStreaming ? streamContent : getStepResult(task);
+  const resultContent = isStreaming ? streamContent : getStepResult(task, runningStep);
   const resultTitle = getStepResultTitle(task, runningStep);
   const progressState = getStepProgressState(runningStep, simPercentage);
   const progressMessage = runningStep

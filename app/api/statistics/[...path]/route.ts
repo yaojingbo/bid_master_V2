@@ -13,17 +13,22 @@ const BACKEND = (process.env.BACKEND_URL || (process.env.NODE_ENV === "productio
 
 async function proxyRequest(request: NextRequest, segments: string[]) {
   const path = segments.join("/");
-  const url = `${BACKEND}/api/statistics/${path}`;
+  const url = new URL(`${BACKEND}/api/statistics/${path}`);
+  request.nextUrl.searchParams.forEach((value, key) => {
+    url.searchParams.append(key, value);
+  });
   const method = request.method;
 
   const headers: Record<string, string> = {};
   const auth = request.headers.get("Authorization");
   if (auth) headers["Authorization"] = auth;
 
-  let body: string | undefined;
+  const contentType = request.headers.get("Content-Type");
+  if (contentType) headers["Content-Type"] = contentType;
+
+  let body: BodyInit | undefined;
   if (method !== "GET" && method !== "HEAD") {
-    body = await request.text();
-    headers["Content-Type"] = "application/json";
+    body = await request.arrayBuffer();
   }
 
   try {
