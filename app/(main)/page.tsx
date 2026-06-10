@@ -37,7 +37,7 @@ const features = [
     tags: ['报价排名', '偏差分析', '报告生成', 'Excel解析'],
   },
   {
-    href: '/workbench',
+    href: '/database',
     icon: Settings,
     number: '4',
     title: '系统工具',

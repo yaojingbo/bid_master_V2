@@ -5,7 +5,7 @@
  */
 import { create } from "zustand";
 import { authLogin, authRegister, authRefresh, authMe } from "@/lib/auth-api";
-import { setAuthCookie, clearAuthCookie } from "@/lib/auth-cookie";
+import { setAuthCookie, clearAuthCookie, hasAuthCookie } from "@/lib/auth-cookie";
 import { useFileStore } from "@/stores/file-store";
 import { useTaskStore } from "@/stores/task-store";
 import { useLogStore } from "@/stores/log-store";
@@ -134,6 +134,10 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       return;
     }
     const { accessToken, refreshAccessToken } = get();
+    if (!hasAuthCookie()) {
+      set({ accessToken: null, user: null, isAuthenticated: false, authReady: true });
+      return;
+    }
     if (accessToken) {
       try {
         const user = await authMe(accessToken);

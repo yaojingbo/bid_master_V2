@@ -5,7 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { useAuthStore } from "@/stores/auth-store";
 
-const protectedRoutes = ["/settings"];
+const protectedRoutes: string[] = [];
 const authDisabled = process.env.NEXT_PUBLIC_AUTH_DISABLED === "true";
 
 export default function MainLayout({

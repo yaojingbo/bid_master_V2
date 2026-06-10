@@ -8,6 +8,8 @@ import { PageHeader } from '@/components/layout/PageHeader';
 import { getApiKeys, saveApiKey, deleteApiKey, type ApiKeyItem } from '@/lib/api-keys';
 import { authFetch } from '@/lib/auth-fetch';
 import { useSettingsStore } from '@/stores/settings-store';
+import { useRequireAuth } from '@/hooks/useRequireAuth';
+import { useAuthStore } from '@/stores/auth-store';
 
 interface Provider {
   id: string;
@@ -23,6 +25,8 @@ interface TestResult {
 }
 
 export default function SettingsPage() {
+  const requireAuth = useRequireAuth();
+  const { authReady, isAuthenticated } = useAuthStore();
   const [providers, setProviders] = useState<Provider[]>([]);
   const storeActiveProvider = useSettingsStore(s => s.activeProvider);
   const setStoreActiveProvider = useSettingsStore(s => s.setActiveProvider);
@@ -92,8 +96,12 @@ export default function SettingsPage() {
 
   useEffect(() => {
     loadProviders();
+  }, [loadProviders]);
+
+  useEffect(() => {
+    if (!authReady || !isAuthenticated) return;
     loadSavedKeys();
-  }, [loadProviders, loadSavedKeys]);
+  }, [authReady, isAuthenticated, loadSavedKeys]);
 
   const getPendingModel = useCallback(
     (providerId: string) => modelValues[providerId]?.trim() || activeModels[providerId],
@@ -102,6 +110,7 @@ export default function SettingsPage() {
 
   // 测试连接
   const handleTest = async (providerId: string) => {
+    if (!requireAuth()) return;
     setTestingProvider(providerId);
     setTestResult(null);
     try {
@@ -135,6 +144,7 @@ export default function SettingsPage() {
 
   // 切换供应商
   const handleSwitchProvider = async (providerId: string) => {
+    if (!requireAuth()) return;
     setSwitchingProvider(providerId);
     setSwitchResult(null);
     try {
@@ -165,6 +175,7 @@ export default function SettingsPage() {
 
   // 保存 API Key（保存前验证连接）
   const handleSaveKey = async (providerId: string) => {
+    if (!requireAuth()) return;
     const key = apiKeyValues[providerId]?.trim();
     const typedModel = modelValues[providerId]?.trim();
     if (!key && !typedModel) {
@@ -224,6 +235,7 @@ export default function SettingsPage() {
 
   // 删除 API Key
   const handleDeleteKey = async (providerId: string) => {
+    if (!requireAuth()) return;
     setDeletingProvider(providerId);
     setApiKeyResult(null);
     try {

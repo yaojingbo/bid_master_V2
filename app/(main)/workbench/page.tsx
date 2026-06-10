@@ -6,6 +6,7 @@ import { BarChart3, BookOpen, FileSearch, FileText, Sparkles, Terminal, Upload }
 import { WorkbenchLayout } from '@/components/layout/WorkbenchLayout';
 import { getStats, type DataStats } from '@/lib/data-api';
 import { useSettingsStore } from '@/stores/settings-store';
+import { useAuthStore } from '@/stores/auth-store';
 
 const actionCards = [
   {
@@ -38,12 +39,17 @@ const emptyStats: DataStats = {
 export default function WorkbenchPage() {
   const [stats, setStats] = useState<DataStats>(emptyStats);
   const { activeModel } = useSettingsStore();
+  const { authReady, isAuthenticated } = useAuthStore();
 
   useEffect(() => {
+    if (!authReady || !isAuthenticated) {
+      setStats(emptyStats);
+      return;
+    }
     getStats()
       .then(setStats)
       .catch(() => setStats(emptyStats));
-  }, []);
+  }, [authReady, isAuthenticated]);
 
   const generatedReports = stats.simulate_tasks + stats.opening_results + stats.extract_results;
 

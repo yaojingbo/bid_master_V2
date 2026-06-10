@@ -7,11 +7,15 @@ import { WorkbenchLayout } from '@/components/layout/WorkbenchLayout';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { useLogStore, type LogEntry } from '@/stores/log-store';
 import { authFetch } from '@/lib/auth-fetch';
+import { useRequireAuth } from '@/hooks/useRequireAuth';
+import { useAuthStore } from '@/stores/auth-store';
 
 type LevelFilter = 'all' | 'info' | 'warn' | 'error';
 type SourceFilter = 'all' | 'frontend' | 'backend';
 
 export default function LogsPage() {
+  const requireAuth = useRequireAuth();
+  const { authReady, isAuthenticated } = useAuthStore();
   const frontendLogs = useLogStore(s => s.logs);
   const clearLogs = useLogStore(s => s.clearLogs);
   const [backendLogs, setBackendLogs] = useState<LogEntry[]>([]);
@@ -22,6 +26,7 @@ export default function LogsPage() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
   const clearBackendLogs = async () => {
+    if (!requireAuth()) return;
     try {
       const res = await authFetch('/api/logs', { method: 'DELETE' });
       if (res.ok) {
@@ -34,6 +39,7 @@ export default function LogsPage() {
   };
 
   const fetchBackendLogs = useCallback(async () => {
+    if (!isAuthenticated) return;
     setLoading(true);
     try {
       const res = await authFetch('/api/logs?limit=200');
@@ -46,11 +52,12 @@ export default function LogsPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [isAuthenticated]);
 
   useEffect(() => {
+    if (!authReady) return;
     fetchBackendLogs();
-  }, [fetchBackendLogs]);
+  }, [authReady, fetchBackendLogs]);
 
   const allLogs = [...frontendLogs, ...backendLogs]
     .filter(l => levelFilter === 'all' || l.level === levelFilter)

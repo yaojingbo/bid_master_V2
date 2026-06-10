@@ -18,3 +18,8 @@ export function clearAuthCookie(): void {
   if (typeof document === "undefined") return;
   document.cookie = `${AUTH_COOKIE_NAME}=; Path=/; Max-Age=0`;
 }
+
+export function hasAuthCookie(): boolean {
+  if (typeof document === "undefined") return false;
+  return document.cookie.split("; ").some(cookie => cookie === `${AUTH_COOKIE_NAME}=1`);
+}
