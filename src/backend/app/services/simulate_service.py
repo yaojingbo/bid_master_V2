@@ -22,10 +22,16 @@ from app.services.prompt_builder import ELEMENT_NAMES
 
 logger = logging.getLogger(__name__)
 
-STEP3_IDLE_TIMEOUT_SECONDS = 4.0
-STEP3_MAX_IDLE_TICKS = 8
-STEP4_IDLE_TIMEOUT_SECONDS = 4.0
-STEP4_MAX_IDLE_TICKS = 8
+STEP2_PER_FILE_MAX_CHARS = 120000
+STEP2_TOTAL_MAX_CHARS = 500000
+STEP3_INPUT_MAX_CHARS = 500000
+STEP4_INPUT_MAX_CHARS = 700000
+STEP2_IDLE_TIMEOUT_SECONDS = 8.0
+STEP2_MAX_IDLE_TICKS = 30
+STEP3_IDLE_TIMEOUT_SECONDS = 8.0
+STEP3_MAX_IDLE_TICKS = 30
+STEP4_IDLE_TIMEOUT_SECONDS = 8.0
+STEP4_MAX_IDLE_TICKS = 45
 
 
 def _format_step2_elements(raw_text: str) -> str:
@@ -256,13 +262,13 @@ class SimulateService:
             try:
                 content = await file_service.download(file_id, user_id)
                 text, _ = extract_text_from_content(content)
-                combined_text += f"\n## 文件: {file_id}\n{text[:30000]}\n---\n"
+                combined_text += f"\n## 文件: {file_id}\n{text[:STEP2_PER_FILE_MAX_CHARS]}\n---\n"
             except Exception:
                 pass
 
         builder = get_prompt_builder()
         system_prompt = builder.build_extract_system_prompt("standard")
-        user_prompt = builder.build_extract_user_prompt(combined_text[:200000], mode="single")
+        user_prompt = builder.build_extract_user_prompt(combined_text[:STEP2_TOTAL_MAX_CHARS], mode="single")
 
         from app.services.llm_service import LLMService
         llm = LLMService()
@@ -304,13 +310,13 @@ class SimulateService:
             running_percentage = 70
             while True:
                 try:
-                    event = await asyncio.wait_for(chunk_queue.get(), timeout=5.0)
+                    event = await asyncio.wait_for(chunk_queue.get(), timeout=STEP2_IDLE_TIMEOUT_SECONDS)
                     idle_ticks = 0
                 except asyncio.TimeoutError:
                     idle_ticks += 1
                     running_percentage = _next_running_percentage(running_percentage, 88)
                     yield {"type": "llm_progress", "message": "AI 正在提取要素...", "phase": "generating", "percentage": running_percentage}
-                    if idle_ticks < 12:
+                    if idle_ticks < STEP2_MAX_IDLE_TICKS:
                         continue
                     result_holder["text"] = result_holder["text"].strip() or _fallback_simulate_result(2, combined_text)
                     await _save_step2_result()
@@ -373,7 +379,7 @@ class SimulateService:
         builder = get_prompt_builder()
 
         system_prompt = builder.build_simulate_system_prompt("step3_compare")
-        user_prompt = builder.build_simulate_user_prompt(task.step2_result[:200000], "step3_compare")
+        user_prompt = builder.build_simulate_user_prompt(task.step2_result[:STEP3_INPUT_MAX_CHARS], "step3_compare")
 
         messages = [
             {"role": "system", "content": system_prompt},
@@ -488,8 +494,14 @@ class SimulateService:
         builder = get_prompt_builder()
 
         system_prompt = builder.build_simulate_system_prompt("step4_simulate")
+        step4_source = "\n\n".join([
+            "# 要素提取结果",
+            task.step2_result,
+            "# 对比分析结论",
+            task.step3_result,
+        ]).strip()
         user_prompt = builder.build_simulate_user_prompt(
-            task.step3_result[:200000], "step4_simulate", params
+            step4_source[:STEP4_INPUT_MAX_CHARS], "step4_simulate", params
         )
 
         messages = [
@@ -552,7 +564,7 @@ class SimulateService:
                     if idle_ticks < STEP4_MAX_IDLE_TICKS:
                         continue
                     logger.warning("模拟编制 Step4 模型长时间无输出，启用兜底结果: task_id=%s partial_length=%s", task_id, len(result_holder["text"]))
-                    result_holder["text"] = result_holder["text"].strip() or _fallback_simulate_result(4, task.step3_result, params)
+                    result_holder["text"] = result_holder["text"].strip() or _fallback_simulate_result(4, step4_source, params)
                     await _save_step4_result()
                     _saved = True
                     if not bg_task.done():
@@ -580,7 +592,7 @@ class SimulateService:
                         _saved = True
                         yield {"type": "done", "data": {"summary": "模拟编制完成", "content": task.step4_result}, "phase": "completing", "percentage": 100}
                     else:
-                        result_holder["text"] = _fallback_simulate_result(4, task.step3_result, params)
+                        result_holder["text"] = _fallback_simulate_result(4, step4_source, params)
                         await _save_step4_result()
                         _saved = True
                         yield {"type": "content", "content": result_holder["text"]}

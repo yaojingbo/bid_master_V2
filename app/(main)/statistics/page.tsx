@@ -167,11 +167,8 @@ export default function StatisticsPage() {
 
   // AI 分析进度模拟（轮询模式无真实百分比，用时间模拟递增）
   useEffect(() => {
-    if (!aiStreaming) {
-      setAiPercentage(null);
-      return;
-    }
-    setAiPercentage(5);
+    if (!aiStreaming) return;
+    setAiPercentage(prev => (prev === 100 ? 100 : 5));
     const timer = setInterval(() => {
       setAiPercentage(prev => {
         if (prev === null) return 5;
@@ -549,6 +546,7 @@ export default function StatisticsPage() {
     if (!result || !uploadedFile) return;
 
     setAiContent('');
+    setAiPercentage(5);
     setAiStreaming(true);
     setActiveTab('comprehensive');
 
@@ -1421,10 +1419,10 @@ export default function StatisticsPage() {
                   <TaskProgress
                     phases={statisticsPhases}
                     currentPhase={deriveStatisticsPhase(aiPercentage)}
-                    percentage={Math.min(aiPercentage ?? 0, 90)}
+                    percentage={aiPercentage === 100 ? 100 : Math.min(aiPercentage ?? 0, 90)}
                     message={`AI 正在分析中（${activeProvider}/${activeModel || 'default'}），大文件可能需要更长时间...`}
-                    isActive={aiStreaming}
-                    isDone={false}
+                    isActive={aiStreaming && aiPercentage !== 100}
+                    isDone={aiPercentage === 100 && !aiStreaming}
                     showStop
                     onStop={() => {
                       abortRef.current?.abort();

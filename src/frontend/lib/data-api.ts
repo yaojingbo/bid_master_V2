@@ -65,6 +65,7 @@ export interface ExtractResultRecord {
   template_type: string;
   mode: string;
   content: string;
+  elements?: { name?: string; content?: string }[];
   status?: string;
   created_at: string | null;
 }
@@ -206,6 +207,12 @@ export async function listExtracts(params: {
 
 export async function getExtract(resultId: string): Promise<ExtractResultRecord> {
   return apiFetch(`/extracts/${resultId}`);
+}
+
+export async function exportExtractJson(resultId: string): Promise<Blob> {
+  const res = await authFetch(`${API_BASE}/api/data/extracts/${resultId}/export-json`);
+  if (!res.ok) throw new Error(`导出 JSON 失败: HTTP ${res.status}`);
+  return res.blob();
 }
 
 export async function deleteExtract(resultId: string): Promise<{ success: boolean }> {

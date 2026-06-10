@@ -7,6 +7,7 @@ import {
   ArrowLeft,
   BarChart3,
   Calendar,
+  Code2,
   Download,
   Eye,
   FileSearch,
@@ -38,6 +39,7 @@ import {
   listOpenings,
   deleteOpening as apiDeleteOpening,
   listExtracts,
+  exportExtractJson,
   deleteExtract as apiDeleteExtract,
 } from '@/lib/data-api';
 import { useFileStore } from '@/stores/file-store';
@@ -392,6 +394,19 @@ export default function DatabasePage() {
       downloadBlob(blob, file.original_name);
     } catch (err) {
       setDownloadError(err instanceof Error ? err.message : '下载失败');
+    } finally {
+      setDownloadingId(null);
+    }
+  };
+
+  const handleExportExtractJson = async (result: ExtractResultRecord) => {
+    setDownloadingId(result.id);
+    setDownloadError(null);
+    try {
+      const blob = await exportExtractJson(result.id);
+      downloadBlob(blob, `extract_${result.id}_${result.template_type}.json`);
+    } catch (err) {
+      setDownloadError(err instanceof Error ? err.message : '导出 JSON 失败');
     } finally {
       setDownloadingId(null);
     }
@@ -786,15 +801,25 @@ export default function DatabasePage() {
         </div>
         <div className="flex items-center justify-between gap-3">
           {renderCardActions({ type: 'extracts', record: result })}
-          <button
-            className="inline-flex h-8 items-center gap-1.5 rounded-full bg-primary px-3 text-xs font-medium text-primary-foreground hover:bg-primary/90"
-            onClick={() =>
-              downloadMarkdown(`extract_${result.id}_${result.template_type}.md`, result.content)
-            }
-          >
-            <Download className="h-3.5 w-3.5" />
-            下载
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              className="inline-flex h-8 items-center gap-1.5 rounded-full border border-border px-3 text-xs font-medium hover:bg-muted disabled:opacity-50"
+              disabled={downloadingId === result.id}
+              onClick={() => handleExportExtractJson(result)}
+            >
+              <Code2 className="h-3.5 w-3.5" />
+              JSON
+            </button>
+            <button
+              className="inline-flex h-8 items-center gap-1.5 rounded-full bg-primary px-3 text-xs font-medium text-primary-foreground hover:bg-primary/90"
+              onClick={() =>
+                downloadMarkdown(`extract_${result.id}_${result.template_type}.md`, result.content)
+              }
+            >
+              <Download className="h-3.5 w-3.5" />
+              下载
+            </button>
+          </div>
         </div>
       </CardContent>
     </Card>
@@ -1004,6 +1029,16 @@ export default function DatabasePage() {
             >
               Markdown
             </button>
+            {record.type === 'extracts' && (
+              <button
+                className="inline-flex h-9 items-center gap-2 rounded-full border border-border px-4 text-sm font-medium hover:bg-muted disabled:opacity-50"
+                disabled={downloadingId === record.record.id}
+                onClick={() => handleExportExtractJson(record.record)}
+              >
+                <Code2 className="h-4 w-4" />
+                导出 JSON
+              </button>
+            )}
             <button
               className="inline-flex h-9 items-center gap-2 rounded-full bg-primary px-4 text-sm font-medium text-primary-foreground hover:bg-primary/90"
               onClick={() => handleDownloadDetail(record)}

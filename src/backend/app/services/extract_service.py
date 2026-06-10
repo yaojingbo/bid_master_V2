@@ -13,15 +13,20 @@ from app.services.file_service import FileService
 from app.infrastructure.pg_storage import add_extract, get_file, calculate_content_hash, find_completed_extract
 
 
-def _format_extract_result(record: dict) -> str:
-    elements = record.get("elements") or []
+def _format_elements_as_markdown(elements: list[dict[str, Any]], fallback_text: str = "") -> str:
     if elements:
-        return "\n\n".join(
-            f"## {element.get('name', '要素')}\n{element.get('content', '')}"
+        markdown = "\n\n".join(
+            f"## {element.get('name', '要素')}\n{element.get('content', '')}".strip()
             for element in elements
             if isinstance(element, dict)
-        )
-    return str(record.get("content") or "")
+        ).strip()
+        if markdown:
+            return markdown
+    return fallback_text.strip()
+
+
+def _format_extract_result(record: dict) -> str:
+    return _format_elements_as_markdown(record.get("elements") or [], str(record.get("content") or ""))
 
 logger = logging.getLogger(__name__)
 
@@ -580,12 +585,13 @@ class ExtractService:
                         json_str, found_elements = _parse_llm_json_response(full_response)
                         found_elements = _normalize_elements(found_elements, full_response, selected_names)
 
+                        markdown_content = _format_elements_as_markdown(found_elements, full_response)
                         await add_extract({
                             "file_id": file_id,
                             "file_name": file_name,
                             "template_type": template_type,
                             "mode": effective_mode,
-                            "content": json_str,
+                            "content": markdown_content,
                             "elements": found_elements,
                             "status": "completed",
                             "source_hash": effective_source_hash,
@@ -604,7 +610,7 @@ class ExtractService:
                         }
                     except json.JSONDecodeError:
                         found_elements = _elements_from_plain_text(full_response, selected_names)
-                        content = json.dumps({"elements": found_elements}, ensure_ascii=False)
+                        content = _format_elements_as_markdown(found_elements, full_response)
                         await add_extract({
                             "file_id": file_id,
                             "file_name": file_name,

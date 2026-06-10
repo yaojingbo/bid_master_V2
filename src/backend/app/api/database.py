@@ -4,6 +4,7 @@
 所有端点强制认证，按 user_id 隔离数据。
 """
 import io
+import json
 import zipfile
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
@@ -246,6 +247,34 @@ async def api_get_extract(result_id: str, current_user: dict = Depends(get_curre
     if not record:
         raise HTTPException(status_code=404, detail="Result not found")
     return record
+
+
+@router.get("/extracts/{result_id}/export-json")
+async def api_export_extract_json(result_id: str, current_user: dict = Depends(get_current_user)):
+    record = await get_extract(result_id, user_id=current_user["id"])
+    if not record:
+        raise HTTPException(status_code=404, detail="Result not found")
+
+    payload = {
+        "id": record.get("id"),
+        "file_id": record.get("file_id"),
+        "file_name": record.get("file_name") or record.get("name"),
+        "template_type": record.get("template_type"),
+        "mode": record.get("mode"),
+        "status": record.get("status"),
+        "created_at": record.get("created_at"),
+        "elements": record.get("elements") or [],
+        "markdown_content": record.get("content") or "",
+    }
+    content = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
+    filename = quote(f"extract_{result_id}.json")
+    return StreamingResponse(
+        iter([content]),
+        media_type="application/json",
+        headers={
+            "Content-Disposition": f"attachment; filename=\"{filename}\"; filename*=UTF-8''{filename}"
+        },
+    )
 
 
 @router.delete("/extracts/{result_id}")

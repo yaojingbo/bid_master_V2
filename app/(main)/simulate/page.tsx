@@ -465,8 +465,12 @@ export default function SimulatePage() {
       }
 
       stopProgressTimer();
+      const completedStep = stepNum;
       const nextTask = await refreshTask();
-      if (nextTask && finalContent) {
+      const savedContent = nextTask ? getStepResult(nextTask, completedStep) : '';
+      if (savedContent) {
+        setStreamContent(savedContent);
+      } else if (finalContent) {
         setStreamContent(finalContent);
       }
       setIsStreaming(false);
