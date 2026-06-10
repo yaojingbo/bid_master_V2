@@ -7,8 +7,18 @@ from pathlib import Path
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-_BACKEND_DIR = Path(__file__).resolve().parents[1]
-_PROJECT_ROOT = _BACKEND_DIR.parents[1]
+_APP_DIR = Path(__file__).resolve().parent
+_BACKEND_DIR = _APP_DIR.parent
+
+
+def _find_project_root(start: Path) -> Path:
+    for path in (start, *start.parents):
+        if (path / "package.json").exists() or (path / ".git").exists():
+            return path
+    return start
+
+
+_PROJECT_ROOT = _find_project_root(_BACKEND_DIR)
 _ENV_FILES = (
     _PROJECT_ROOT / ".env",
     _PROJECT_ROOT / ".env.local",
