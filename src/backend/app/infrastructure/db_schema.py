@@ -226,6 +226,16 @@ CREATE TABLE IF NOT EXISTS reset_tokens (
     user_id VARCHAR(64) REFERENCES users(id) ON DELETE CASCADE,
     expires_at TIMESTAMPTZ NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS cli_device_codes (
+    device_code TEXT PRIMARY KEY,
+    user_code VARCHAR(16) UNIQUE NOT NULL,
+    status VARCHAR(20) DEFAULT 'pending',
+    user_id VARCHAR(64) REFERENCES users(id) ON DELETE CASCADE,
+    expires_at TIMESTAMPTZ NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    authorized_at TIMESTAMPTZ
+);
 """
 
 
