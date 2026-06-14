@@ -49,8 +49,8 @@ export function WorkbenchLayout({ children }: WorkbenchLayoutProps) {
   const { user, isAuthenticated, isLoading, logout } = useAuthStore();
 
   return (
-    <div className="mx-auto flex max-w-none gap-8 px-0">
-      <aside className="flex min-h-[calc(100vh-10rem)] w-56 shrink-0 flex-col border-r border-border pr-4">
+    <div className="mx-auto flex max-w-none gap-4 px-0 lg:gap-8">
+      <aside className="hidden min-h-[calc(100vh-10rem)] w-56 shrink-0 flex-col border-r border-border pr-4 lg:flex">
         <div className="mb-8 px-2">
           <BidMasterLogo markClassName="h-9 w-9 rounded-xl" />
         </div>

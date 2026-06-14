@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { CheckCircle2, Loader2, Terminal, XCircle } from 'lucide-react';
 import { useAuthStore } from '@/stores/auth-store';
@@ -10,10 +10,16 @@ function CliAuthContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const deviceCode = searchParams.get('device_code') || '';
-  const { authReady, isAuthenticated, user } = useAuthStore();
+  const { authReady, isAuthenticated, user, initAuth } = useAuthStore();
   const [authorizing, setAuthorizing] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
+
+  useEffect(() => {
+    if (!authReady) {
+      initAuth();
+    }
+  }, [authReady, initAuth]);
 
   const handleLogin = () => {
     const callbackUrl = `/cli-auth?device_code=${encodeURIComponent(deviceCode)}`;

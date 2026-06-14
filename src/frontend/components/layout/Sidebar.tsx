@@ -37,12 +37,12 @@ export function Sidebar() {
 
   return (
     <header className="sticky top-0 z-40 border-b border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">
-      <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-8">
-        <Link href="/" className="flex min-w-44 items-center leading-none">
+      <div className="mx-auto flex h-16 max-w-7xl items-center justify-between gap-3 px-4 sm:px-6 lg:px-8">
+        <Link href="/" className="flex shrink-0 items-center leading-none">
           <BidMasterLogo markClassName="h-9 w-9 rounded-xl" />
         </Link>
 
-        <nav className="flex items-center gap-4">
+        <nav className="hidden items-center gap-2 md:flex">
           {navItems.map(item => {
             const active = pathname === item.href;
             const pending = pendingHref === item.href && !active;
@@ -52,7 +52,7 @@ export function Sidebar() {
                 href={item.href}
                 onClick={() => setPendingHref(item.href)}
                 className={cn(
-                  'inline-flex h-9 items-center gap-1.5 rounded-full px-4 text-sm font-medium transition-colors',
+                  'inline-flex h-9 items-center gap-1.5 rounded-full px-3 text-sm font-medium transition-colors lg:px-4',
                   active
                     ? 'bg-muted text-foreground'
                     : 'text-muted-foreground hover:bg-muted hover:text-foreground',
@@ -67,7 +67,7 @@ export function Sidebar() {
           })}
         </nav>
 
-        <div className="flex min-w-44 items-center justify-end gap-3">
+        <div className="flex shrink-0 items-center justify-end gap-2 sm:gap-3">
           <Link
             href="/logs"
             title="系统日志"
@@ -85,7 +85,7 @@ export function Sidebar() {
               <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary/10">
                 <span className="text-sm font-bold text-primary">{user.username[0]}</span>
               </div>
-              <span className="max-w-20 truncate text-sm font-medium text-foreground">
+              <span className="hidden max-w-20 truncate text-sm font-medium text-foreground lg:inline">
                 {user.username}
               </span>
               <button

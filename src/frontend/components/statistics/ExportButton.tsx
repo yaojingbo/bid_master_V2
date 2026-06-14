@@ -12,7 +12,7 @@ interface ExportButtonProps {
 export function ExportButton({ analysisId, format = "pdf", onExport }: ExportButtonProps) {
   const handleExport = () => {
     onExport?.(format);
-    window.open(`/api/statistics/export/${analysisId}?format=${format}`, "_blank");
+    window.open(`/api/statistics/export/${analysisId}?format=${format}`, "_blank", "noopener,noreferrer");
   };
 
   return (

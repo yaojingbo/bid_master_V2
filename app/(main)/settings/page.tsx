@@ -286,7 +286,7 @@ export default function SettingsPage() {
               <p className="text-sm text-muted-foreground mt-1">型号: {activeModel || '默认'}</p>
             </div>
             <div className="flex items-center gap-2">
-              <span className="px-3 py-1 bg-success/10 text-success rounded-full text-sm flex items-center gap-1">
+              <span className="px-3 py-1 bg-success/10 text-emerald-800 rounded-full text-sm flex items-center gap-1">
                 <Check className="h-4 w-4" />
                 已配置
               </span>
@@ -437,7 +437,7 @@ export default function SettingsPage() {
                   <div className="w-24 shrink-0">
                     <p className="font-medium text-sm">{provider.name}</p>
                     {isKeySaved(provider.id) && (
-                      <p className="text-xs text-success flex items-center gap-1">
+                      <p className="text-xs text-emerald-800 flex items-center gap-1">
                         <Check className="h-3 w-3" />
                         已配置
                       </p>
@@ -473,13 +473,14 @@ export default function SettingsPage() {
                           ? `已保存: ${getMaskedKey(provider.id)}`
                           : '输入 API Key'
                       }
-                      className="w-full px-3 py-2 text-sm border border-border rounded bg-background focus:outline-none focus:ring-2 focus:ring-primary/20 pr-8"
+                      className="w-full px-3 py-2 pr-12 text-sm border border-border rounded bg-background focus:outline-none focus:ring-2 focus:ring-primary/20"
                     />
                     {/* 显示/隐藏 切换 */}
                     <button
                       type="button"
                       onClick={() => toggleShowKey(provider.id)}
-                      className="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 text-muted-foreground hover:text-foreground"
+                      className="absolute right-1 top-1/2 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded text-muted-foreground hover:text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20"
+                      aria-label={showKeys[provider.id] ? `隐藏 ${provider.name} API Key` : `显示 ${provider.name} API Key`}
                     >
                       {showKeys[provider.id] ? (
                         <EyeOff className="h-4 w-4" />

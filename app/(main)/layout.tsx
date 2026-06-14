@@ -53,7 +53,7 @@ export default function MainLayout({
     <div className="min-h-screen bg-background">
       <Sidebar />
       <main>
-        <div className="mx-auto px-8 py-16">
+        <div className="mx-auto px-4 py-8 sm:px-6 sm:py-10 lg:px-8 lg:py-16">
           {children}
         </div>
       </main>
