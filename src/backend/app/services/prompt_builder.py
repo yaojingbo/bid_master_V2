@@ -106,6 +106,8 @@ class PromptBuilder:
             + ",\n".join(f'  {{"name": "{n}", "content": "..."}}' for n in element_names_json)
             + "\n]}}\n\n"
             f"content 字段使用 Markdown 格式（可含表格），内容参考上方模板的结构，信息完整详实。"
+            f"如果文档内容中包含以 '--- 第 N 页表格 ---' 标记的表格文本，必须优先依据这些表格抽取评分细则；"
+            f"表格行内被换行拆开的词语需要合并识别，例如 '企业业\\n绩' 视为 '企业业绩'，'项目负\\n责人业\\n绩' 视为 '项目负责人业绩'。"
         )
         if template_type == "batch":
             json_format += (
@@ -113,6 +115,13 @@ class PromptBuilder:
                 f"必须按要素拆分输出 {len(element_names_json)} 个独立对象，name 必须分别为：{'、'.join(element_names_json)}。"
                 "每个 content 内部再横向对比多份文件；禁止把所有内容合并到一个 '分析结果'、'批量对比' 或任意单一要素中。"
                 "如果某个要素在部分文件中未明确，也必须保留该要素对象，并在对应文件列中写“未明确”。"
+            )
+        elif template_type in {"standard", "brief"}:
+            json_format += (
+                "\n\n# 单文件分板块结构化要求\n\n"
+                f"必须按要素拆分输出 {len(element_names_json)} 个独立对象，name 必须分别为：{'、'.join(element_names_json)}。"
+                "每个对象的 content 只写该要素对应内容；禁止把所有要素混在一个 JSON 字符串、一个 '分析结果' 或任意单一对象中。"
+                "如果某个要素在文件中未明确，也必须保留该要素对象，并在 content 中写“未明确”。"
             )
 
         return f"""{role}

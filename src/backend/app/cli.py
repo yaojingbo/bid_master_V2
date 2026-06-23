@@ -100,7 +100,7 @@ def build_parser() -> argparse.ArgumentParser:
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("-v", "--version", action="version", version="Bid Master CLI 1.0.1")
+    parser.add_argument("-v", "--version", action="version", version="Bid Master CLI 1.0.3")
 
     subparsers = parser.add_subparsers(dest="command")
     run_parser = subparsers.add_parser("run", help=argparse.SUPPRESS)
@@ -523,10 +523,14 @@ async def request_remote_extract(
         print_step(3, 4, "网页端 AI 正在提取...")
         elements: list[dict[str, Any]] = []
         raw_contents: list[str] = []
+        last_message = ""
         async for event in iter_sse_events(response):
             event_type = event.get("type")
             if event_type in {"progress", "llm_progress"} and event.get("message"):
-                print(str(event["message"]))
+                message = str(event["message"])
+                if message != last_message:
+                    print(message)
+                    last_message = message
             elif event_type == "element":
                 raw = event.get("data") or event
                 elements.extend(normalize_remote_element(raw))

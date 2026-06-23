@@ -22,6 +22,8 @@ class TestLiteLLMServiceModelMapping:
                 zhipu_api_key="test-key",
                 minimax_api_key="test-key",
                 ollama_base_url="http://localhost:11434",
+                demo_mode=False,
+                auth_disabled=False,
             )
             return LiteLLMService()
 
@@ -36,7 +38,7 @@ class TestLiteLLMServiceModelMapping:
         assert service._get_model_name("zhipu") == "openai/glm-4-flash"
 
     def test_model_mapping_minimax(self, service):
-        assert service._get_model_name("minimax") == "openai/MiniMax-M2.7"
+        assert service._get_model_name("minimax") == "openai/MiniMax-M3"
 
     def test_model_mapping_openai(self, service):
         assert service._get_model_name("openai") == "openai/gpt-4o"
@@ -95,6 +97,8 @@ class TestLiteLLMServiceProviders:
                 zhipu_api_key="sk-zhipu-test",
                 minimax_api_key="sk-minimax-test",
                 ollama_base_url="http://localhost:11434",
+                demo_mode=False,
+                auth_disabled=False,
             )
             return LiteLLMService()
 
@@ -130,6 +134,8 @@ class TestLiteLLMServiceComplete:
                 zhipu_api_key="test-key",
                 minimax_api_key="test-key",
                 ollama_base_url="http://localhost:11434",
+                demo_mode=False,
+                auth_disabled=False,
             )
             return LiteLLMService()
 

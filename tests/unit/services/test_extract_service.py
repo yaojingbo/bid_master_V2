@@ -7,6 +7,8 @@ import pytest
 
 from app.services.extract_service import (
     ExtractService,
+    _normalize_elements,
+    _parse_llm_json_response,
     _parse_markdown_elements_response,
     extract_text_from_content,
 )
@@ -60,6 +62,34 @@ class TestMarkdownElementParsing:
         assert "污水处理厂" in elements[0]["content"]
         assert "市政公用工程" in elements[1]["content"]
         assert "技术方案" in elements[2]["content"]
+
+
+    def test_parse_json_mapping_as_separate_elements(self):
+        """单文件 JSON 对象不应混成一个分析结果。"""
+        _, elements = _parse_llm_json_response(
+            """
+            {
+              "项目基本信息": {"项目名称": "污水处理厂改造", "预算": "100万元"},
+              "资质要求": ["市政公用工程施工总承包三级及以上"],
+              "评标办法": "综合评分法"
+            }
+            """
+        )
+
+        assert [element["name"] for element in elements] == ["项目基本信息", "资质要求", "评标办法"]
+        assert "污水处理厂" in elements[0]["content"]
+        assert "市政公用工程" in elements[1]["content"]
+        assert "综合评分法" in elements[2]["content"]
+
+    def test_normalize_single_json_string_content_by_selected_elements(self):
+        """单个 JSON 字符串内容应按已选要素拆分成板块。"""
+        elements = _normalize_elements(
+            [{"name": "分析结果", "content": "项目基本信息：污水处理厂改造\n\n资质要求：市政三级\n\n评标办法：综合评分法"}],
+            "",
+            ["项目基本信息", "资质要求", "评标办法"],
+        )
+
+        assert [element["name"] for element in elements] == ["项目基本信息", "资质要求", "评标办法"]
 
 
 class TestExtractService:

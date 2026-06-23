@@ -22,6 +22,8 @@ class TestLiteLLMServiceModelMapping:
                 zhipu_api_key="test-key",
                 minimax_api_key="test-key",
                 ollama_base_url="http://localhost:11434",
+                demo_mode=False,
+                auth_disabled=False,
             )
             return LiteLLMService()
 
@@ -36,7 +38,7 @@ class TestLiteLLMServiceModelMapping:
         assert service._get_model_name("zhipu") == "openai/glm-4-flash"
 
     def test_model_mapping_minimax(self, service):
-        assert service._get_model_name("minimax") == "openai/MiniMax-M2.7"
+        assert service._get_model_name("minimax") == "openai/MiniMax-M3"
 
     def test_model_mapping_openai(self, service):
         assert service._get_model_name("openai") == "openai/gpt-4o"
@@ -95,6 +97,8 @@ class TestLiteLLMServiceProviders:
                 zhipu_api_key="sk-zhipu-test",
                 minimax_api_key="sk-minimax-test",
                 ollama_base_url="http://localhost:11434",
+                demo_mode=False,
+                auth_disabled=False,
             )
             return LiteLLMService()
 
@@ -130,6 +134,8 @@ class TestLiteLLMServiceComplete:
                 zhipu_api_key="test-key",
                 minimax_api_key="test-key",
                 ollama_base_url="http://localhost:11434",
+                demo_mode=False,
+                auth_disabled=False,
             )
             return LiteLLMService()
 
@@ -148,19 +154,20 @@ class TestLiteLLMServiceComplete:
             assert result == "Test response"
 
     @pytest.mark.asyncio
-    async def test_complete_stream_yields_chunks(self, service):
-        """流式调用应逐块返回内容。"""
-        mock_chunks = [
-            MagicMock(choices=[MagicMock(delta=MagicMock(content="Hello"))]),
-            MagicMock(choices=[MagicMock(delta=MagicMock(content=" World"))]),
-        ]
+    async def test_openai_compat_stream_error_retries_without_stream(self, service):
+        """OpenAI 兼容供应商流式连接中断时应自动非流式重试。"""
+        calls = []
 
-        async def mock_stream_generator(*args, **kwargs):
-            for chunk in mock_chunks:
-                yield chunk
+        async def fake_complete(provider, messages, model, stream, user_id, api_key_override=None, temperature=None):
+            calls.append(stream)
+            if stream:
+                raise RuntimeError("peer closed connection without sending complete message body (incomplete chunked read)")
+            yield "Retry response"
 
-        with patch("litellm.acompletion", side_effect=mock_stream_generator):
-            chunks = []
-            async for chunk in service.complete("openai", [{"role": "user", "content": "test"}], stream=True):
-                chunks.append(chunk)
-            assert chunks == ["Hello", " World"]
+        with patch.object(service, "_complete_via_openai_compat", side_effect=fake_complete):
+            result = ""
+            async for chunk in service.complete("minimax", [{"role": "user", "content": "test"}], stream=True):
+                result += chunk
+
+        assert result == "Retry response"
+        assert calls == [True, False]

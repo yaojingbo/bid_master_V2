@@ -116,7 +116,9 @@ async def list_files(page: int = 1, page_size: int = 20, file_type: Optional[str
     args_q = args + [page_size, offset]
     idx = len(args) + 1
     rows = await db.fetch_all(
-        f"SELECT * FROM files {base} ORDER BY created_at DESC LIMIT ${idx} OFFSET ${idx+1}", *args_q
+        f"""SELECT id, original_name, path, size, type, user_id, file_hash, created_at
+            FROM files {base} ORDER BY created_at DESC LIMIT ${idx} OFFSET ${idx+1}""",
+        *args_q,
     )
     return {"total": total, "page": page, "page_size": page_size, "files": _serialize_rows(rows)}
 
@@ -442,7 +444,10 @@ async def list_extracts(page: int = 1, page_size: int = 20, user_id: Optional[st
     )
     for r in rows:
         if "elements" in r and isinstance(r["elements"], str):
-            r["elements"] = json.loads(r["elements"])
+            try:
+                r["elements"] = json.loads(r["elements"])
+            except json.JSONDecodeError:
+                r["elements"] = []
     return {"total": total, "page": page, "page_size": page_size, "results": _serialize_rows(rows)}
 
 
@@ -454,7 +459,10 @@ async def get_extract(result_id: str, user_id: Optional[str] = None) -> Optional
     if user_id and row.get("user_id") != user_id:
         return None
     if "elements" in row and isinstance(row["elements"], str):
-        row["elements"] = json.loads(row["elements"])
+        try:
+            row["elements"] = json.loads(row["elements"])
+        except json.JSONDecodeError:
+            row["elements"] = []
     return _serialize_row(row)
 
 

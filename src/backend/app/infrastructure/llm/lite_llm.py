@@ -24,7 +24,7 @@ class LiteLLMService:
         "claude": "anthropic/claude-sonnet-4-20250514",
         "dashscope": "openai/qwen3.6-plus",
         "zhipu": "openai/glm-4-flash",
-        "minimax": "openai/MiniMax-M2.7",
+        "minimax": "openai/MiniMax-M3",
         "ollama": "ollama/llama3",
     }
 
@@ -32,6 +32,7 @@ class LiteLLMService:
     # 不经过 OpenAI SDK（Pydantic 响应校验与第三方不完全兼容）
     # 也不经过 LiteLLM（openai/ 前缀无法可靠转发 api_base）
     OPENAI_COMPATIBLE_PROVIDERS = {"zhipu", "dashscope", "minimax"}
+    MINIMAX_STREAM_DISABLED = True
 
     def __init__(self):
         self.settings = get_settings()
@@ -228,6 +229,18 @@ class LiteLLMService:
         except Exception as e:
             raise RuntimeError(f"调用 {provider} API 失败: {e}") from e
 
+    @staticmethod
+    def _is_retryable_stream_error(error: Exception) -> bool:
+        message = str(error).lower()
+        retryable_signals = [
+            "incomplete chunked read",
+            "peer closed connection",
+            "server disconnected",
+            "connection reset",
+            "response ended prematurely",
+        ]
+        return any(signal in message for signal in retryable_signals)
+
     async def complete(
         self,
         provider: str,
@@ -253,7 +266,7 @@ class LiteLLMService:
         Yields:
             Response chunks if streaming
         """
-        if self.settings.demo_mode or self.settings.auth_disabled:
+        if self.settings.demo_mode is True or self.settings.auth_disabled is True:
             async for chunk in self._demo_complete(messages, stream):
                 yield chunk
             return
@@ -268,6 +281,11 @@ class LiteLLMService:
                 async for chunk in self._complete_via_openai_compat(provider, messages, model, stream, user_id, api_key_override=api_key_override, temperature=temperature):
                     yield chunk
             except Exception as e:
+                if stream and self._is_retryable_stream_error(e):
+                    _add_log("warning", "llm_call", f"{provider}/{resolved_model} 流式中断，自动改用非流式重试", user_id=user_id)
+                    async for chunk in self._complete_via_openai_compat(provider, messages, model, False, user_id, api_key_override=api_key_override, temperature=temperature):
+                        yield chunk
+                    return
                 _add_log("error", "llm_call", f"{provider}/{resolved_model} 调用失败: {str(e)[:200]}", user_id=user_id)
                 raise
             return
@@ -411,7 +429,7 @@ class LiteLLMService:
             {
                 "id": "minimax",
                 "name": "MiniMax",
-                "models": ["MiniMax-M2.7", "MiniMax-M2.5", "MiniMax-M2-Her"],
+                "models": ["MiniMax-M3", "MiniMax-M2.7", "MiniMax-M2.5", "MiniMax-M2-Her"],
             },
             {
                 "id": "openai",

@@ -7,7 +7,7 @@ packages = ["app"]
 
 [project]
 name = "bid-master-cli"
-version = "1.0.1"
+version = "1.0.3"
 description = "Bid Master CLI"
 requires-python = ">=3.12"
 dependencies = [
@@ -24,6 +24,7 @@ dependencies = [
     "markitdown>=0.0.1",
     "pypdf>=5.0.0",
     "pdfplumber>=0.11.0",
+    "PyMuPDF>=1.24.0",
     "openpyxl>=3.1.0",
     "pandas>=2.2.0",
     "python-docx>=1.0.0",
@@ -37,6 +38,7 @@ dependencies = [
 
 [project.scripts]
 bidmaster = "app.cli:main"
+
 
 [project.optional-dependencies]
 dev = [

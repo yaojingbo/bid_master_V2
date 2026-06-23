@@ -97,6 +97,37 @@ const getStepResultTitle = (task: TaskData | null, runningStep: number | null) =
   return '输出预览';
 };
 
+const STEP_STREAM_TITLES: Record<number, string> = {
+  1: '文件转换',
+  2: '要素提取',
+  3: '对比分析',
+  4: '模拟编制',
+};
+
+const formatStepProgressLine = (stepNum: number, message: string, percentage?: number | null) => {
+  const prefix = STEP_STREAM_TITLES[stepNum] || `步骤 ${stepNum}`;
+  const progress = percentage == null ? '' : ` ${percentage}%`;
+  return `- ${prefix}${progress}：${message}`;
+};
+
+const makeStepPreview = (stepNum: number, lines: string[], content: string) => {
+  const title = STEP_STREAM_TITLES[stepNum] || `步骤 ${stepNum}`;
+  const progressBlock = lines.length > 0 ? `## 执行进度\n${lines.join('\n')}` : '';
+  const contentBlock = content.trim() ? `## 实时正文\n${content.trim()}` : '';
+  const waitingBlock = contentBlock ? '' : `## 实时正文\n正在等待模型生成可预览内容...`;
+  return [`# 步骤 ${stepNum}：${title}`, progressBlock, contentBlock || waitingBlock]
+    .filter(Boolean)
+    .join('\n\n');
+};
+
+const shouldShowContentChunk = (text: string) => {
+  const trimmed = text.trim();
+  if (!trimmed) return false;
+  if (/^[{}\[\],:"]+$/.test(trimmed)) return false;
+  if (/^```(?:json)?$/i.test(trimmed)) return false;
+  return /[一-龥A-Za-z0-9#|*-]/.test(trimmed);
+};
+
 interface TaskData {
   taskId: string;
   currentStep: number;
@@ -369,7 +400,7 @@ export default function SimulatePage() {
   const streamStep = async (stepNum: number, body?: Record<string, unknown>) => {
     if (!requireAuth()) return;
     if (!task) return;
-    setStreamContent('');
+    setStreamContent(makeStepPreview(stepNum, [], ''));
     setIsStreaming(true);
     setRunningStep(stepNum);
     setSimPhase('connecting');
@@ -395,7 +426,7 @@ export default function SimulatePage() {
           setSimPhase('completing');
           setSimPercentage(100);
           stopProgressTimer();
-          setStreamContent('PDF转换完成\n');
+          setStreamContent(makeStepPreview(1, [formatStepProgressLine(1, 'PDF转换完成', 100)], ''));
           setRunningStep(null);
           setIsStreaming(false);
           return;
@@ -404,8 +435,10 @@ export default function SimulatePage() {
       }
 
       let finalContent = '';
+      let previewBody = '';
+      const progressLines: string[] = [];
+      const updatePreview = () => setStreamContent(makeStepPreview(stepNum, progressLines, previewBody));
 
-      // Check if this is SSE or JSON
       const contentType = res.headers.get('content-type') || '';
       if (contentType.includes('text/event-stream')) {
         if (!res.body) throw new Error('无响应体');
@@ -439,23 +472,41 @@ export default function SimulatePage() {
                     setSimPercentage(percentage);
                     if (!event.phase) setSimPhase(deriveSimPhase(percentage));
                   }
-                  if (event.message) setStreamContent(prev => prev + event.message + '\n');
+                  if (event.message) {
+                    const line = formatStepProgressLine(
+                      stepNum,
+                      event.message as string,
+                      event.percentage as number | null | undefined
+                    );
+                    if (progressLines[progressLines.length - 1] !== line) {
+                      progressLines.push(line);
+                      if (progressLines.length > 8) progressLines.shift();
+                    }
+                    updatePreview();
+                  }
                 } else if (event.type === 'content') {
                   if (!event.phase) setSimPhase('generating');
                   if (event.percentage == null) setSimPercentage(prev => Math.max(prev ?? 60, 60));
-                  setStreamContent(prev => prev + event.content);
+                  const content = String(event.content || '');
+                  if (shouldShowContentChunk(content)) {
+                    previewBody += content;
+                    updatePreview();
+                  }
                 } else if (event.type === 'done') {
                   setSimPhase('completing');
                   setSimPercentage(100);
                   stopProgressTimer();
+                  const summary = event.data?.summary || '步骤完成';
+                  const line = formatStepProgressLine(stepNum, summary, 100);
+                  if (progressLines[progressLines.length - 1] !== line) progressLines.push(line);
                   if (event.data?.content) {
                     finalContent = event.data.content;
-                    setStreamContent(event.data.content);
-                  } else {
-                    setStreamContent(prev => prev + `\n${event.data?.summary || '步骤完成'}\n`);
+                    previewBody = event.data.content;
                   }
+                  updatePreview();
                 } else if (event.type === 'error') {
-                  setStreamContent(prev => prev + `\n❌ 错误: ${event.data?.message}\n`);
+                  progressLines.push(`- 执行失败：${event.data?.message || '未知错误'}`);
+                  updatePreview();
                 }
               } catch {
                 // skip
@@ -473,7 +524,7 @@ export default function SimulatePage() {
           setSimPhase('completing');
           setSimPercentage(100);
           stopProgressTimer();
-          setStreamContent('PDF转换完成\n');
+          setStreamContent(makeStepPreview(1, [formatStepProgressLine(1, 'PDF转换完成', 100)], ''));
         }
       }
 

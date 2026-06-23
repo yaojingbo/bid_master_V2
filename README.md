@@ -52,34 +52,41 @@ bid-master-web/
 - Python 3.12+
 - Node.js 18+
 
-### 一键启动
+### CLI 一键安装
+
+macOS / Linux：
 
 ```bash
-# Windows
-start.bat
-
-# Git Bash / WSL
-./start.sh
+bash install.sh
 ```
 
-脚本会同时启动后端（端口 8000）和前端（端口 5173）。
+Windows PowerShell：
 
-### 手动启动
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install.ps1
+```
+
+安装器会创建独立虚拟环境，安装 `bidmaster` 及依赖，并生成全局可调用的 `bidmaster` 命令。安装完成后验证：
 
 ```bash
-# 1. 后端
-cd backend
-pip install -r requirements.txt
-cp .env.example .env          # 填入 AI 供应商密钥
-uvicorn app.main:app --reload --port 8000
+bidmaster --version
+bidmaster tools list
+bidmaster auth login
+```
 
-# 2. 前端
-cd frontend
+如果系统未安装 Python 3.12+，请先安装 Python 后重新执行安装器。
+
+### 开发启动
+
+```bash
+# 1. 安装前端依赖
 npm install
-npm run dev
+
+# 2. 启动前后端开发服务
+make dev
 ```
 
-访问 http://localhost:5173 即可使用。
+开发服务默认使用后端端口 8000、前端端口 3000。
 
 ## AI 供应商配置
 

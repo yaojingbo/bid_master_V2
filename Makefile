@@ -1,4 +1,4 @@
-.PHONY: dev frontend backend stop restart
+.PHONY: dev frontend backend stop restart install-cli
 
 FRONTEND_PORT ?= 3000
 BACKEND_PORT ?= 8000
@@ -19,3 +19,6 @@ dev:
 
 restart:
 	$(MAKE) dev
+
+install-cli:
+	bash install.sh

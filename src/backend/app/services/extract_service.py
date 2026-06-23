@@ -29,6 +29,11 @@ def _format_extract_result(record: dict) -> str:
     return _format_elements_as_markdown(record.get("elements") or [], str(record.get("content") or ""))
 
 logger = logging.getLogger(__name__)
+EXTRACTION_CACHE_VERSION = "pdf-table-ocr-v1"
+
+
+def _versioned_source_hash(source_hash: str) -> str:
+    return f"{source_hash}:{EXTRACTION_CACHE_VERSION}"
 
 
 def _strip_json_fence(text: str) -> str:
@@ -107,6 +112,27 @@ def _find_balanced_json_end(text: str) -> int | None:
     return None
 
 
+def _coerce_json_value_to_content(value: Any) -> str:
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, ensure_ascii=False, indent=2)
+    if value is None:
+        return ""
+    return str(value).strip()
+
+
+def _elements_from_json_mapping(parsed: dict[str, Any]) -> list[dict[str, str]]:
+    elements = []
+    for name, value in parsed.items():
+        if name in {"summary", "metadata", "meta"}:
+            continue
+        content = _coerce_json_value_to_content(value)
+        if content:
+            elements.append({"name": str(name), "content": content})
+    return elements
+
+
 def _parse_llm_json_response(response: str) -> tuple[str, list[dict[str, Any]]]:
     candidate = _strip_json_fence(response)
     json_start = _find_json_start(candidate)
@@ -129,10 +155,14 @@ def _parse_llm_json_response(response: str) -> tuple[str, list[dict[str, Any]]]:
     if isinstance(parsed, dict) and "elements" in parsed:
         found_elements = parsed["elements"]
     elif isinstance(parsed, dict):
-        found_elements = next(
-            (v for v in parsed.values() if isinstance(v, list) and v and isinstance(v[0], dict)),
-            [],
-        )
+        mapped_elements = _elements_from_json_mapping(parsed)
+        if mapped_elements:
+            found_elements = mapped_elements
+        else:
+            found_elements = next(
+                (v for v in parsed.values() if isinstance(v, list) and v and isinstance(v[0], dict)),
+                [],
+            )
     elif isinstance(parsed, list):
         found_elements = parsed
     else:
@@ -286,22 +316,48 @@ def _normalize_elements(elements: list[dict[str, Any]], fallback_text: str, sele
     return split_elements if len(split_elements) > 1 else normalized
 
 
-def extract_text_from_pdf(content: bytes, max_pages: int = 30) -> tuple[str, bool]:
+def _format_pdf_table(table: list[list[Any]]) -> str:
+    rows = []
+    for row in table:
+        cells = [str(cell or "").strip() for cell in row]
+        if any(cells):
+            rows.append(" | ".join(cells))
+    return "\n".join(rows)
+
+
+def extract_text_from_pdf(content: bytes, max_pages: int = 120) -> tuple[str, bool]:
     """从PDF二进制内容中提取文本。返回 (文本, 是否需要OCR)。"""
     import pdfplumber
-    text = ""
+    parts = []
     page_count = 0
+    low_text_pages: list[int] = []
     with pdfplumber.open(io.BytesIO(content)) as pdf:
-        for i, page in enumerate(pdf.pages[:max_pages]):
+        for i, page in enumerate(pdf.pages[:max_pages], start=1):
             page_count += 1
-            page_text = page.extract_text()
-            if page_text:
-                text += page_text + "\n"
-    # 仅当 pdfplumber 几乎无法提取文本时才判定为图片型 PDF
-    # 阈值：总文本 < 100 字符（纯扫描件通常为 0，正常 PDF 即使有封面页也远超 100）
+            page_text = page.extract_text() or ""
+            tables = page.extract_tables() or []
+            table_parts = [_format_pdf_table(table) for table in tables]
+            table_text = "\n\n".join(part for part in table_parts if part.strip())
+            page_chars = len(page_text.strip()) + len(table_text.strip())
+
+            if page_text.strip():
+                parts.append(f"\n\n--- 第 {i} 页文本 ---\n{page_text.strip()}")
+            if table_text.strip():
+                parts.append(f"\n\n--- 第 {i} 页表格 ---\n{table_text.strip()}")
+            if page_chars < 30:
+                low_text_pages.append(i)
+
+    text = "\n".join(parts)
     total_chars = len(text.strip())
-    needs_ocr = page_count > 0 and total_chars < 100
-    logger.info("PDF 文本提取: %d 页, %d 字符, needs_ocr=%s", page_count, total_chars, needs_ocr)
+    scanned_ratio = len(low_text_pages) / page_count if page_count else 0
+    needs_ocr = page_count > 0 and (total_chars < 100 or scanned_ratio >= 0.6)
+    logger.info(
+        "PDF 文本提取: %d 页, %d 字符, 低文本页=%d, needs_ocr=%s",
+        page_count,
+        total_chars,
+        len(low_text_pages),
+        needs_ocr,
+    )
     return text, needs_ocr
 
 
@@ -444,7 +500,7 @@ class ExtractService:
             yield {"type": "progress", "message": "正在读取文档...", "phase": "reading", "percentage": 5}
 
             content = await self.file_service.download(document_id, user_id)
-            source_hash = calculate_content_hash(content)
+            source_hash = _versioned_source_hash(calculate_content_hash(content))
             cached = await find_completed_extract(source_hash, template_type, mode, elements, user_id) if user_id else None
             if cached:
                 yield {"type": "progress", "message": "已复用同一原始文件的历史要素提取结果", "phase": "extracting", "percentage": 90}
@@ -474,7 +530,7 @@ class ExtractService:
                     ocr_text = await ocr_pdf(content, eff_provider, eff_model, user_id)
                     logger.info("OCR 完成: %d 字符", len(ocr_text))
                     if ocr_text.strip():
-                        text_content = ocr_text
+                        text_content = "\n\n".join(part for part in [text_content.strip(), ocr_text.strip()] if part)
                         yield {"type": "progress", "message": f"OCR 识别完成（{len(ocr_text)}字符），正在分析...", "phase": "parsing", "percentage": 20}
                     else:
                         yield {"type": "progress", "message": "OCR 未识别到文字，使用原始提取结果", "phase": "parsing", "percentage": 20}
@@ -749,7 +805,7 @@ class ExtractService:
             yield {"type": "progress", "message": "正在读取招标文件...", "phase": "reading", "percentage": 5}
 
             content = await self.file_service.download(file_id, user_id)
-            source_hash = calculate_content_hash(content)
+            source_hash = _versioned_source_hash(calculate_content_hash(content))
             cached = await find_completed_extract(source_hash, "standard", "single", None, user_id) if user_id else None
             if cached:
                 cached_text = _format_extract_result(cached)

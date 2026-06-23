@@ -19,7 +19,7 @@ VISION_MODELS: dict[str, list[str]] = {
     "openai": ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo"],
     "claude": ["claude-sonnet-4-20250514", "claude-opus-4-5-20251101"],
     "dashscope": [
-        "qwen3.7-max", "qwen3.6-plus", "qwen3.6-flash",
+        "qwen3.7-plus", "qwen3.7-max", "qccwen3.6-plus", "qwen3.6-flash",
         "qwen-vl-ocr", "qwen3-vl-plus", "qwen-vl-plus", "qwen-vl-max",
     ],
     "zhipu": ["glm-4v-plus", "glm-4v"],
@@ -60,25 +60,34 @@ def _get_fallback_provider_model() -> tuple[str, str]:
     return "dashscope", "qwen-vl-ocr"
 
 
-def pdf_pages_to_images(content: bytes, dpi: int = 150, max_pages: int = MAX_OCR_PAGES) -> list[str]:
-    """将 PDF 每页渲染为 base64 编码的 PNG 图片。
+def pdf_pages_to_images(
+    content: bytes,
+    dpi: int = 150,
+    max_pages: int = MAX_OCR_PAGES,
+    page_numbers: list[int] | None = None,
+) -> list[tuple[int, str]]:
+    """将 PDF 指定页面渲染为 base64 编码的 PNG 图片。
 
     Returns:
-        每页图片的 base64 字符串列表
+        (页码, 图片 base64) 列表
     """
     import fitz  # PyMuPDF
 
+    selected_pages = set(page_numbers or [])
     doc = fitz.open(stream=content, filetype="pdf")
-    images: list[str] = []
-    zoom = dpi / 72  # PDF 默认 72 DPI
+    images: list[tuple[int, str]] = []
+    zoom = dpi / 72
     matrix = fitz.Matrix(zoom, zoom)
 
-    for i, page in enumerate(doc):
-        if i >= max_pages:
+    for page_index, page in enumerate(doc):
+        page_num = page_index + 1
+        if selected_pages and page_num not in selected_pages:
+            continue
+        if len(images) >= max_pages:
             break
         pix = page.get_pixmap(matrix=matrix)
         img_bytes = pix.tobytes("png")
-        images.append(base64.b64encode(img_bytes).decode("utf-8"))
+        images.append((page_num, base64.b64encode(img_bytes).decode("utf-8")))
 
     doc.close()
     return images
@@ -108,6 +117,7 @@ async def ocr_pdf(
     model: str = None,
     user_id: str = None,
     progress_callback=None,
+    page_numbers: list[int] | None = None,
 ) -> str:
     """对图片型 PDF 执行 OCR 识别。
 
@@ -117,13 +127,14 @@ async def ocr_pdf(
         model: 模型名（可选）
         user_id: 用户 ID（用于 API Key 查找）
         progress_callback: 进度回调，签名为 async callback(page, total)
+        page_numbers: 仅识别指定页码，None 表示从首页开始识别
 
     Returns:
         识别出的全部文字
     """
     effective_provider, effective_model = resolve_vision_model(provider, model)
 
-    images = pdf_pages_to_images(content)
+    images = pdf_pages_to_images(content, page_numbers=page_numbers)
     total = len(images)
 
     if total == 0:
@@ -132,11 +143,9 @@ async def ocr_pdf(
     llm = LiteLLMService()
     all_text: list[str] = []
 
-    for i, img_b64 in enumerate(images):
-        page_num = i + 1
-
+    for i, (page_num, img_b64) in enumerate(images):
         if progress_callback:
-            await progress_callback(page_num, total)
+            await progress_callback(i + 1, total)
 
         messages = [
             {
@@ -170,7 +179,7 @@ async def ocr_pdf(
                 response_text += chunk
 
             if response_text.strip():
-                all_text.append(f"--- 第 {page_num} 页 ---\n{response_text.strip()}")
+                all_text.append(f"--- 第 {page_num} 页 OCR 文本 ---\n{response_text.strip()}")
         except Exception as e:
             err_msg = str(e)
             logger.warning("OCR 第 %d 页失败: %s", page_num, e)
@@ -178,6 +187,6 @@ async def ocr_pdf(
             if "401" in err_msg or "403" in err_msg or "API key" in err_msg.lower() or "Incorrect" in err_msg:
                 logger.error("OCR 认证失败，终止剩余页面识别: %s", err_msg[:200])
                 raise RuntimeError(f"视觉模型 {effective_provider}/{effective_model} 认证失败，请确认 API Key 有该模型权限")
-            all_text.append(f"--- 第 {page_num} 页 ---\n[OCR 识别失败: {err_msg[:80]}]")
+            all_text.append(f"--- 第 {page_num} 页 OCR 文本 ---\n[OCR 识别失败: {err_msg[:80]}]")
 
     return "\n\n".join(all_text)

@@ -1,6 +1,9 @@
 # ===== Claude Code =====
 .claude/
 
+# ===== Run logs =====
+error_log/
+
 # ===== Bun & Node.js =====
 node_modules/
 bun.lockb
