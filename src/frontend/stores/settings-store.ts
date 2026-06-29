@@ -4,6 +4,8 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
+export type OcrEngine = "auto" | "ocrmypdf" | "paddleocr" | "llm";
+
 interface Provider {
   id: string;
   name: string;
@@ -29,6 +31,9 @@ interface SettingsState {
   /** per-provider model config, keyed by provider id */
   activeModels: Record<string, string>;
 
+  // OCR engine (扫描件识别引擎)
+  ocrEngine: OcrEngine;
+
   // Connection status
   isTesting: boolean;
   lastTestResult: {
@@ -41,6 +46,7 @@ interface SettingsState {
   setProviders: (providers: Provider[]) => void;
   setActiveProvider: (providerId: string) => void;
   setProviderModel: (providerId: string, model: string) => void;
+  setOcrEngine: (engine: OcrEngine) => void;
   setTesting: (isTesting: boolean) => void;
   setTestResult: (result: SettingsState["lastTestResult"]) => void;
 }
@@ -52,6 +58,7 @@ export const useSettingsStore = create<SettingsState>()(
       activeProvider: "deepseek",
       activeModel: DEFAULT_MODELS["deepseek"],
       activeModels: { ...DEFAULT_MODELS },
+      ocrEngine: "auto",
       isTesting: false,
       lastTestResult: null,
 
@@ -72,6 +79,8 @@ export const useSettingsStore = create<SettingsState>()(
         }));
       },
 
+      setOcrEngine: (ocrEngine) => set(() => ({ ocrEngine })),
+
       setTesting: (isTesting) => set(() => ({ isTesting })),
 
       setTestResult: (result) => set(() => ({
@@ -85,6 +94,7 @@ export const useSettingsStore = create<SettingsState>()(
         activeProvider: state.activeProvider,
         activeModel: state.activeModel,
         activeModels: state.activeModels,
+        ocrEngine: state.ocrEngine,
       }),
     }
   )

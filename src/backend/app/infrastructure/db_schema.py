@@ -1,7 +1,7 @@
 """
 PostgreSQL schema initialization.
-Executes CREATE TABLE IF NOT EXISTS on startup.
-包含迁移逻辑：检测旧 schema 并自动重建。
+
+当前数据库 schema 的唯一权威来源是本文件中的 SCHEMA_SQL；Drizzle schema 仅对齐这里的真实表结构，不能作为迁移入口。
 """
 
 SCHEMA_SQL = """

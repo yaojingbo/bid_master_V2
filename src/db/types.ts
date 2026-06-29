@@ -1,57 +1,46 @@
 // src/db/types.ts
 import { InferSelectModel, InferInsertModel } from 'drizzle-orm';
 import {
-  tenderDocuments,
-  analysisResults,
-  aiConfigurations,
-  extractedElements,
-  statistics,
-  downloadLogs,
-  systemConfigurations,
-  auditLogs
+  users,
+  files,
+  simulates,
+  openings,
+  extracts,
+  apiKeys,
+  verificationCodes,
+  resetTokens,
+  cliDeviceCodes,
 } from './schema';
-import type { relations } from 'drizzle-orm';
 
 // ============================================
-// Document Types
+// 后端真实表类型
 // ============================================
-export type TenderDocument = InferSelectModel<typeof tenderDocuments>;
-export type NewTenderDocument = InferInsertModel<typeof tenderDocuments>;
+export type User = InferSelectModel<typeof users>;
+export type NewUser = InferInsertModel<typeof users>;
 
-// ============================================
-// Analysis Types
-// ============================================
-export type AnalysisResult = InferSelectModel<typeof analysisResults>;
-export type NewAnalysisResult = InferInsertModel<typeof analysisResults>;
+export type FileRecord = InferSelectModel<typeof files>;
+export type NewFileRecord = InferInsertModel<typeof files>;
 
-// ============================================
-// AI Config Types
-// ============================================
-export type AIConfiguration = InferSelectModel<typeof aiConfigurations>;
-export type NewAIConfiguration = InferInsertModel<typeof aiConfigurations>;
+export type SimulateRecord = InferSelectModel<typeof simulates>;
+export type NewSimulateRecord = InferInsertModel<typeof simulates>;
 
-// ============================================
-// Element Types
-// ============================================
-export type ExtractedElement = InferSelectModel<typeof extractedElements>;
-export type NewExtractedElement = InferInsertModel<typeof extractedElements>;
+export type OpeningRecord = InferSelectModel<typeof openings>;
+export type NewOpeningRecord = InferInsertModel<typeof openings>;
 
-// ============================================
-// Statistics Types
-// ============================================
-export type Statistic = InferSelectModel<typeof statistics>;
-export type NewStatistic = InferInsertModel<typeof statistics>;
+export type ExtractRecord = InferSelectModel<typeof extracts>;
+export type NewExtractRecord = InferInsertModel<typeof extracts>;
 
-// ============================================
-// Log Types
-// ============================================
-export type DownloadLog = InferSelectModel<typeof downloadLogs>;
-export type AuditLog = InferSelectModel<typeof auditLogs>;
+export type ApiKeyRecord = InferSelectModel<typeof apiKeys>;
+export type NewApiKeyRecord = InferInsertModel<typeof apiKeys>;
 
-// ============================================
-// Config Types
-// ============================================
-export type SystemConfiguration = InferSelectModel<typeof systemConfigurations>;
+export type VerificationCode = InferSelectModel<typeof verificationCodes>;
+export type NewVerificationCode = InferInsertModel<typeof verificationCodes>;
+
+export type ResetToken = InferSelectModel<typeof resetTokens>;
+export type NewResetToken = InferInsertModel<typeof resetTokens>;
+
+export type CliDeviceCode = InferSelectModel<typeof cliDeviceCodes>;
+export type NewCliDeviceCode = InferInsertModel<typeof cliDeviceCodes>;
 
 // ============================================
 // Enums

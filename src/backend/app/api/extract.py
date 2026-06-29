@@ -15,7 +15,32 @@ from app.utils.auth_dep import get_current_user
 router = APIRouter(prefix="/extract", tags=["extract"])
 
 
+def _normalize_ocr_params(req) -> dict:
+    page_numbers = req.ocr_pages or req.ocrPages
+    engine = req.ocrEngine or req.ocr_engine or "auto"
+    max_pages = req.ocrMaxPages if req.ocrMaxPages is not None else req.ocr_max_pages
+    timeout_seconds = req.ocr_timeout_seconds if req.ocrTimeoutSeconds is None else req.ocrTimeoutSeconds
+
+    if max_pages is None:
+        if engine == "ocrmypdf":
+            max_pages = None
+        elif engine == "llm":
+            max_pages = 3
+        elif engine == "paddleocr":
+            max_pages = 15
+        else:
+            max_pages = 15
+
+    return {
+        "ocr_engine": engine,
+        "ocr_pages": page_numbers,
+        "ocr_max_pages": max_pages,
+        "ocr_timeout_seconds": timeout_seconds or 120,
+    }
+
+
 async def extract_elements_generator(
+    request: Request,
     document_id: str,
     provider: str = "deepseek",
     model: str = None,
@@ -32,7 +57,7 @@ async def extract_elements_generator(
     extract_service = ExtractService()
 
     async for event in extract_service.extract_elements_stream(
-        document_id, provider, model, template_type, elements, mode, params, user_id=user_id
+        document_id, provider, model, template_type, elements, mode, params, user_id=user_id, request=request
     ):
         yield {
             "event": event.get("type", "message"),
@@ -48,12 +73,14 @@ async def extract_element(request: Request, current_user: dict = Depends(get_cur
     req = ExtractRequest(**body)
     return EventSourceResponse(
         extract_elements_generator(
+            request,
             req.fileId,
             req.provider or "deepseek",
             req.model,
             req.template_type or "standard",
             req.elements,
             req.mode or "single",
+            params=_normalize_ocr_params(req),
             user_id=current_user["id"],
         )
     )
@@ -70,9 +97,12 @@ async def extract_batch_generator(
     model: str = None,
     elements: list[str] = None,
     user_id: str = None,
+    ocr_params: dict = None,
 ):
     extract_service = ExtractService()
-    async for event in extract_service.extract_batch_stream(file_ids, provider, model, elements, user_id=user_id):
+    async for event in extract_service.extract_batch_stream(
+        file_ids, provider, model, elements, user_id=user_id, ocr_params=ocr_params or {}
+    ):
         yield {
             "event": event.get("type", "message"),
             "data": json.dumps(event, ensure_ascii=False),
@@ -94,6 +124,7 @@ async def extract_batch(request: Request, current_user: dict = Depends(get_curre
             req.model,
             req.elements,
             user_id=current_user["id"],
+            ocr_params=_normalize_ocr_params(req),
         )
     )
 
@@ -104,10 +135,11 @@ async def extract_threshold_generator(
     provider: str = "deepseek",
     model: str = None,
     user_id: str = None,
+    ocr_params: dict = None,
 ):
     extract_service = ExtractService()
     async for event in extract_service.extract_threshold_stream(
-        file_id, user_qualifications, provider, model, user_id=user_id
+        file_id, user_qualifications, provider, model, user_id=user_id, ocr_params=ocr_params or {}
     ):
         yield {
             "event": event.get("type", "message"),
@@ -130,6 +162,7 @@ async def extract_threshold(request: Request, current_user: dict = Depends(get_c
             req.provider or "deepseek",
             req.model,
             user_id=current_user["id"],
+            ocr_params=_normalize_ocr_params(req),
         )
     )
 

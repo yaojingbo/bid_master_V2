@@ -5,7 +5,6 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
-import os
 
 from app.config import get_settings
 from app.api import files, extract, settings, statistics, database as data, health, simulate, auth, api_keys, logs, cli_auth
@@ -30,11 +29,12 @@ async def lifespan(app: FastAPI):
         await init_schema(db)
         print("Database schema initialized")
     except Exception as e:
-        if os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("RENDER") or os.getenv("FLY_APP_NAME"):
+        if settings.auth_disabled or settings.demo_mode:
+            from app.infrastructure.pg_storage import enable_mock_storage
+            enable_mock_storage()
+            print(f"Database unavailable, using local mock storage: {e}")
+        else:
             raise
-        from app.infrastructure.pg_storage import enable_mock_storage
-        enable_mock_storage()
-        print(f"Database unavailable, using local mock storage: {e}")
 
     yield
 

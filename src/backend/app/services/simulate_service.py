@@ -7,11 +7,12 @@ import asyncio
 import io
 import json
 import logging
+import time
 import uuid
 from typing import Optional, AsyncGenerator, Dict, Any
 from dataclasses import dataclass, field
 
-from app.infrastructure.pg_storage import add_simulate, update_simulate, get_file, calculate_content_hash, find_completed_extract
+from app.infrastructure.pg_storage import add_simulate, update_simulate, get_file, find_completed_extract
 from app.services.extract_service import (
     _elements_from_plain_text,
     _format_extract_result,
@@ -120,15 +121,19 @@ class SimulateService:
     async def create_task(self, file_ids: list[str], user_id: str = None) -> SimulateTask:
         """创建模拟任务（Step 0）"""
         task_id = f"sim_{uuid.uuid4().hex[:10]}"
+        started_at = time.monotonic()
         from datetime import datetime
-        from app.services.file_service import get_file_service
-        file_service = get_file_service()
         source_hashes = []
-        for file_id in file_ids:
-            try:
-                source_hashes.append(calculate_content_hash(await file_service.download(file_id, user_id)))
-            except Exception:
-                source_hashes.append(file_id)
+        file_names = []
+        for fid in file_ids:
+            f = await get_file(fid, user_id)
+            if not f:
+                source_hashes.append(fid)
+                continue
+            source_hashes.append(f.get("file_hash") or fid)
+            name = f.get("original_name", "")
+            if name:
+                file_names.append(name.rsplit(".", 1)[0])
         source_hash = ",".join(sorted(source_hashes))
         task = SimulateTask(
             task_id=task_id,
@@ -141,13 +146,6 @@ class SimulateService:
         user_tasks = self._get_user_tasks(user_id)
         user_tasks[task_id] = task
 
-        file_names = []
-        for fid in file_ids[:3]:
-            f = await get_file(fid, user_id)
-            if f:
-                name = f.get("original_name", "")
-                if name:
-                    file_names.append(name.rsplit(".", 1)[0])
         ts = datetime.now().strftime("%m%d_%H%M")
         task_name = f"模拟编制_{'_'.join(file_names[:2])}_{ts}" if file_names else f"模拟编制_{ts}"
 
@@ -160,9 +158,11 @@ class SimulateService:
             "step_results": {},
             "file_ids": file_ids,
             "files": [],
+            "file_names": file_names,
             "source_hash": source_hash,
             "created_at": task.created_at,
         }, user_id=user_id)
+        logger.info("模拟编制任务创建完成: task_id=%s, files=%d, elapsed=%.2fs", task_id, len(file_ids), time.monotonic() - started_at)
         return task
 
     def get_task(self, task_id: str, user_id: str = None) -> Optional[SimulateTask]:

@@ -1,13 +1,20 @@
 """
-PDF OCR 服务：使用多模态 LLM 识别图片型 PDF 中的文字。
-当 pdfplumber 提取文本量过少时，判定为扫描件，触发 OCR 流程。
+PDF OCR 服务调度器：
+- engine="ocrmypdf"：本地 OCRmyPDF + Tesseract 识别（macOS 默认推荐）
+- engine="paddleocr"：本地 PaddleOCR 识别（Linux 可选）
+- engine="llm"：多模态 LLM 视觉模型识别（云端、按 token 计费）
+- engine="auto"（默认）：macOS 优先 OCRmyPDF，Linux 可优先 PaddleOCR，本地失败时回退 LLM
+
+当 pdfplumber 提取文本量过少时，判定为扫描件，由 extract_service 触发 OCR 流程。
 """
 from __future__ import annotations
 
+import asyncio
 import base64
 import io
 import logging
-from typing import AsyncGenerator, Dict, Any, Optional
+import platform
+from typing import AsyncGenerator, Dict, Any, Literal, Optional
 
 from app.infrastructure.llm.lite_llm import LiteLLMService
 
@@ -19,7 +26,7 @@ VISION_MODELS: dict[str, list[str]] = {
     "openai": ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo"],
     "claude": ["claude-sonnet-4-20250514", "claude-opus-4-5-20251101"],
     "dashscope": [
-        "qwen3.7-plus", "qwen3.7-max", "qccwen3.6-plus", "qwen3.6-flash",
+        "qwen3.7-plus", "qwen3.7-max", "qwen3.6-plus", "qwen3.6-flash",
         "qwen-vl-ocr", "qwen3-vl-plus", "qwen-vl-plus", "qwen-vl-max",
     ],
     "zhipu": ["glm-4v-plus", "glm-4v"],
@@ -63,8 +70,9 @@ def _get_fallback_provider_model() -> tuple[str, str]:
 def pdf_pages_to_images(
     content: bytes,
     dpi: int = 150,
-    max_pages: int = MAX_OCR_PAGES,
+    max_pages: int | None = MAX_OCR_PAGES,
     page_numbers: list[int] | None = None,
+    cancel_event: asyncio.Event | None = None,
 ) -> list[tuple[int, str]]:
     """将 PDF 指定页面渲染为 base64 编码的 PNG 图片。
 
@@ -79,11 +87,14 @@ def pdf_pages_to_images(
     zoom = dpi / 72
     matrix = fitz.Matrix(zoom, zoom)
 
+    page_limit = max_pages or MAX_OCR_PAGES
     for page_index, page in enumerate(doc):
+        if cancel_event and cancel_event.is_set():
+            break
         page_num = page_index + 1
         if selected_pages and page_num not in selected_pages:
             continue
-        if len(images) >= max_pages:
+        if len(images) >= page_limit:
             break
         pix = page.get_pixmap(matrix=matrix)
         img_bytes = pix.tobytes("png")
@@ -118,23 +129,107 @@ async def ocr_pdf(
     user_id: str = None,
     progress_callback=None,
     page_numbers: list[int] | None = None,
+    engine: Literal["llm", "ocrmypdf", "paddleocr", "auto"] = "auto",
+    max_pages: int | None = None,
+    timeout_seconds: int | None = None,
+    cancel_event: asyncio.Event | None = None,
 ) -> str:
-    """对图片型 PDF 执行 OCR 识别。
+    """对图片型 PDF 执行 OCR 识别。"""
+    engine_name = (engine or "auto").lower()
 
-    Args:
-        content: PDF 二进制内容
-        provider: LLM 供应商
-        model: 模型名（可选）
-        user_id: 用户 ID（用于 API Key 查找）
-        progress_callback: 进度回调，签名为 async callback(page, total)
-        page_numbers: 仅识别指定页码，None 表示从首页开始识别
+    if engine_name in ("auto", "ocrmypdf", "local"):
+        try:
+            from app.services.ocrmypdf_service import is_ocrmypdf_available, ocrmypdf_pdf
 
-    Returns:
-        识别出的全部文字
-    """
+            if not is_ocrmypdf_available():
+                if engine_name in ("ocrmypdf", "local"):
+                    raise RuntimeError("OCRmyPDF 或 Tesseract 中文语言包未安装，请先安装 ocrmypdf 和 tesseract-lang")
+                logger.info("OCR engine=auto 但 OCRmyPDF 不可用，继续尝试其他 OCR 路径")
+            else:
+                logger.info("OCR engine=ocrmypdf（%s）", engine_name)
+                try:
+                    text = await ocrmypdf_pdf(
+                        content,
+                        page_numbers=page_numbers,
+                        progress_callback=progress_callback,
+                        max_pages=max_pages,
+                        timeout_seconds=timeout_seconds,
+                        cancel_event=cancel_event,
+                    )
+                except Exception as ocrmypdf_err:
+                    if engine_name in ("ocrmypdf", "local"):
+                        raise RuntimeError(f"OCRmyPDF 识别失败: {ocrmypdf_err}") from ocrmypdf_err
+                    logger.warning("OCRmyPDF 异常，继续尝试其他 OCR 路径: %s", ocrmypdf_err)
+                else:
+                    if text.strip():
+                        return text
+                    logger.warning("OCRmyPDF 未识别到文字，继续尝试其他 OCR 路径")
+        except Exception as e:
+            if engine_name in ("ocrmypdf", "local"):
+                raise
+            logger.warning("OCRmyPDF 调度异常，继续尝试其他 OCR 路径: %s", e)
+
+    should_try_paddleocr = engine_name == "paddleocr" or (engine_name == "auto" and platform.system() == "Linux")
+    if should_try_paddleocr:
+        try:
+            from app.services.paddleocr_service import is_paddleocr_available, paddleocr_pdf
+
+            if not is_paddleocr_available():
+                if engine_name == "paddleocr":
+                    raise RuntimeError("PaddleOCR 未安装，请切换为 auto/ocrmypdf/llm 引擎")
+                logger.info("OCR engine=auto 但 PaddleOCR 未安装，回退 LLM")
+            else:
+                logger.info("OCR engine=paddleocr（%s）", engine_name)
+                try:
+                    text = await paddleocr_pdf(
+                        content,
+                        page_numbers,
+                        progress_callback,
+                        max_pages=max_pages,
+                        cancel_event=cancel_event,
+                        timeout_seconds=timeout_seconds,
+                    )
+                except Exception as paddle_err:
+                    if engine_name == "paddleocr":
+                        raise RuntimeError(f"PaddleOCR 识别失败: {paddle_err}") from paddle_err
+                    logger.warning("PaddleOCR 异常，回退 LLM: %s", paddle_err)
+                else:
+                    if text.strip():
+                        return text
+                    logger.warning("PaddleOCR 未识别到文字，回退 LLM")
+        except Exception as e:
+            if engine_name == "paddleocr":
+                raise
+            logger.warning("OCR 调度异常，回退 LLM: %s", e)
+
+    return await _ocr_pdf_llm(
+        content,
+        provider,
+        model,
+        user_id,
+        progress_callback,
+        page_numbers,
+        max_pages=max_pages,
+        timeout_seconds=timeout_seconds,
+        cancel_event=cancel_event,
+    )
+
+
+async def _ocr_pdf_llm(
+    content: bytes,
+    provider: str,
+    model: str,
+    user_id: str,
+    progress_callback,
+    page_numbers: list[int] | None,
+    max_pages: int | None = None,
+    timeout_seconds: int | None = None,
+    cancel_event: asyncio.Event | None = None,
+) -> str:
+    """LLM 视觉模型 OCR 路径（多模态云端识别）。"""
     effective_provider, effective_model = resolve_vision_model(provider, model)
 
-    images = pdf_pages_to_images(content, page_numbers=page_numbers)
+    images = pdf_pages_to_images(content, page_numbers=page_numbers, max_pages=max_pages, cancel_event=cancel_event)
     total = len(images)
 
     if total == 0:
@@ -144,6 +239,8 @@ async def ocr_pdf(
     all_text: list[str] = []
 
     for i, (page_num, img_b64) in enumerate(images):
+        if cancel_event and cancel_event.is_set():
+            break
         if progress_callback:
             await progress_callback(i + 1, total)
 
@@ -168,15 +265,22 @@ async def ocr_pdf(
         ]
 
         try:
-            response_text = ""
-            async for chunk in llm.complete(
-                effective_provider,
-                messages,
-                model=effective_model,
-                stream=False,
-                user_id=user_id,
-            ):
-                response_text += chunk
+            async def collect_page_text() -> str:
+                page_text = ""
+                async for chunk in llm.complete(
+                    effective_provider,
+                    messages,
+                    model=effective_model,
+                    stream=False,
+                    user_id=user_id,
+                ):
+                    page_text += chunk
+                return page_text
+
+            if timeout_seconds:
+                response_text = await asyncio.wait_for(collect_page_text(), timeout=timeout_seconds)
+            else:
+                response_text = await collect_page_text()
 
             if response_text.strip():
                 all_text.append(f"--- 第 {page_num} 页 OCR 文本 ---\n{response_text.strip()}")

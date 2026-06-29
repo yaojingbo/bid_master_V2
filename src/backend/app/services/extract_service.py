@@ -2,9 +2,12 @@ from __future__ import annotations
 """
 Extract service for document element extraction using LLM.
 """
+import asyncio
+import contextlib
 import io
 import logging
 import re
+import time
 from typing import AsyncGenerator, Dict, Any, Optional
 import json
 
@@ -29,11 +32,30 @@ def _format_extract_result(record: dict) -> str:
     return _format_elements_as_markdown(record.get("elements") or [], str(record.get("content") or ""))
 
 logger = logging.getLogger(__name__)
-EXTRACTION_CACHE_VERSION = "pdf-table-ocr-v1"
+EXTRACTION_CACHE_VERSION = "pdf-table-ocr-v2"
 
 
-def _versioned_source_hash(source_hash: str) -> str:
-    return f"{source_hash}:{EXTRACTION_CACHE_VERSION}"
+def _resolve_ocr_runtime_params(ocr_params: dict) -> tuple[str, list[int] | None, int | None, int]:
+    engine = ocr_params.get("ocr_engine", "auto")
+    page_numbers = ocr_params.get("ocr_pages")
+    if "ocr_max_pages" in ocr_params:
+        max_pages = ocr_params["ocr_max_pages"]
+    elif engine == "ocrmypdf":
+        max_pages = None
+    elif engine == "llm":
+        max_pages = 3
+    else:
+        max_pages = 15
+    timeout_seconds = ocr_params.get("ocr_timeout_seconds") or (600 if engine == "ocrmypdf" else 120)
+    return engine, page_numbers, max_pages, timeout_seconds
+
+
+def _versioned_source_hash(source_hash: str, ocr_params: Optional[dict] = None) -> str:
+    if not ocr_params:
+        return f"{source_hash}:{EXTRACTION_CACHE_VERSION}"
+    ocr_engine, ocr_pages, ocr_max_pages, _ = _resolve_ocr_runtime_params(ocr_params)
+    pages_key = ",".join(str(page) for page in ocr_pages) if ocr_pages else ("all" if ocr_max_pages is None else f"first-{ocr_max_pages}")
+    return f"{source_hash}:{EXTRACTION_CACHE_VERSION}:ocr={ocr_engine}:pages={pages_key}"
 
 
 def _strip_json_fence(text: str) -> str:
@@ -331,6 +353,7 @@ def extract_text_from_pdf(content: bytes, max_pages: int = 120) -> tuple[str, bo
     parts = []
     page_count = 0
     low_text_pages: list[int] = []
+    image_pages: list[int] = []
     with pdfplumber.open(io.BytesIO(content)) as pdf:
         for i, page in enumerate(pdf.pages[:max_pages], start=1):
             page_count += 1
@@ -339,6 +362,7 @@ def extract_text_from_pdf(content: bytes, max_pages: int = 120) -> tuple[str, bo
             table_parts = [_format_pdf_table(table) for table in tables]
             table_text = "\n\n".join(part for part in table_parts if part.strip())
             page_chars = len(page_text.strip()) + len(table_text.strip())
+            has_images = bool(getattr(page, "images", None))
 
             if page_text.strip():
                 parts.append(f"\n\n--- 第 {i} 页文本 ---\n{page_text.strip()}")
@@ -346,16 +370,24 @@ def extract_text_from_pdf(content: bytes, max_pages: int = 120) -> tuple[str, bo
                 parts.append(f"\n\n--- 第 {i} 页表格 ---\n{table_text.strip()}")
             if page_chars < 30:
                 low_text_pages.append(i)
+            if has_images:
+                image_pages.append(i)
 
     text = "\n".join(parts)
     total_chars = len(text.strip())
     scanned_ratio = len(low_text_pages) / page_count if page_count else 0
-    needs_ocr = page_count > 0 and (total_chars < 100 or scanned_ratio >= 0.6)
+    image_ratio = len(image_pages) / page_count if page_count else 0
+    needs_ocr = page_count > 0 and (
+        total_chars < 100
+        or scanned_ratio >= 0.6
+        or (image_ratio >= 0.5 and scanned_ratio >= 0.3)
+    )
     logger.info(
-        "PDF 文本提取: %d 页, %d 字符, 低文本页=%d, needs_ocr=%s",
+        "PDF 文本提取: %d 页, %d 字符, 低文本页=%d, 图片页=%d, needs_ocr=%s",
         page_count,
         total_chars,
         len(low_text_pages),
+        len(image_pages),
         needs_ocr,
     )
     return text, needs_ocr
@@ -481,6 +513,7 @@ class ExtractService:
         mode: str = "single",
         params: Optional[dict] = None,
         user_id: Optional[str] = None,
+        request: Any = None,
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """
         Extract elements from document with SSE streaming.
@@ -499,8 +532,9 @@ class ExtractService:
         try:
             yield {"type": "progress", "message": "正在读取文档...", "phase": "reading", "percentage": 5}
 
+            ocr_params = params or {}
             content = await self.file_service.download(document_id, user_id)
-            source_hash = _versioned_source_hash(calculate_content_hash(content))
+            source_hash = _versioned_source_hash(calculate_content_hash(content), ocr_params)
             cached = await find_completed_extract(source_hash, template_type, mode, elements, user_id) if user_id else None
             if cached:
                 yield {"type": "progress", "message": "已复用同一原始文件的历史要素提取结果", "phase": "extracting", "percentage": 90}
@@ -518,8 +552,10 @@ class ExtractService:
 
             # 图片型 PDF：触发 OCR 识别
             if needs_ocr:
-                logger.info("触发 OCR: document_id=%s, provider=%s, model=%s", document_id, provider, model)
-                yield {"type": "progress", "message": "检测到图片型 PDF，正在启动 OCR 识别...", "phase": "parsing", "percentage": 12}
+                ocr_engine = (params or {}).get("ocr_engine", "auto")
+                logger.info("触发 OCR: document_id=%s, engine=%s, provider=%s, model=%s", document_id, ocr_engine, provider, model)
+                engine_hint = "本地 OCRmyPDF" if ocr_engine in ("auto", "ocrmypdf", "local") else ("本地 PaddleOCR" if ocr_engine == "paddleocr" else f"云端视觉模型 {provider}")
+                yield {"type": "progress", "message": f"检测到图片型 PDF，正在启动 {engine_hint} 识别...", "phase": "parsing", "percentage": 12}
                 try:
                     from app.services.ocr_service import ocr_pdf, resolve_vision_model
                     eff_provider, eff_model = resolve_vision_model(provider, model)
@@ -527,8 +563,22 @@ class ExtractService:
                         logger.info("OCR 模型回退: %s/%s → %s/%s", provider, model, eff_provider, eff_model)
                         yield {"type": "progress", "message": f"当前模型不支持图片识别，已切换到 {eff_provider}/{eff_model}", "phase": "parsing", "percentage": 13}
 
-                    ocr_text = await ocr_pdf(content, eff_provider, eff_model, user_id)
-                    logger.info("OCR 完成: %d 字符", len(ocr_text))
+                    ocr_result = None
+                    async for ocr_event in self._run_ocr_with_progress(
+                        content,
+                        eff_provider,
+                        eff_model,
+                        user_id,
+                        ocr_params,
+                        request,
+                    ):
+                        if ocr_event.get("type") == "ocr_result":
+                            ocr_result = ocr_event
+                        else:
+                            yield ocr_event
+
+                    ocr_text = (ocr_result or {}).get("text", "")
+                    logger.info("OCR 完成: %d 字符 (engine=%s)", len(ocr_text), ocr_engine)
                     if ocr_text.strip():
                         text_content = "\n\n".join(part for part in [text_content.strip(), ocr_text.strip()] if part)
                         yield {"type": "progress", "message": f"OCR 识别完成（{len(ocr_text)}字符），正在分析...", "phase": "parsing", "percentage": 20}
@@ -573,6 +623,122 @@ class ExtractService:
 
         except Exception as e:
             yield {"type": "error", "data": {"message": str(e)}}
+
+    async def _run_ocr_with_progress(
+        self,
+        content: bytes,
+        provider: str,
+        model: Optional[str],
+        user_id: Optional[str],
+        ocr_params: dict,
+        request: Any = None,
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        from app.services.ocr_service import ocr_pdf
+
+        queue: asyncio.Queue = asyncio.Queue()
+        cancel_event = asyncio.Event()
+        started_at = time.monotonic()
+        result_holder = {"text": "", "error": None}
+        engine = ocr_params.get("ocr_engine", "auto")
+        page_numbers = ocr_params.get("ocr_pages")
+        if "ocr_max_pages" in ocr_params:
+            max_pages = ocr_params["ocr_max_pages"]
+        elif engine == "ocrmypdf":
+            max_pages = None
+        else:
+            max_pages = 15
+        timeout_seconds = ocr_params.get("ocr_timeout_seconds") or (600 if engine == "ocrmypdf" else 120)
+        last_heartbeat = started_at
+
+        async def progress_callback(page: int, total: int):
+            percentage = min(25, 12 + int((page / max(total, 1)) * 13))
+            await queue.put({
+                "type": "ocr_progress",
+                "message": f"OCR 正在识别第 {page}/{total} 页...",
+                "phase": "parsing",
+                "percentage": percentage,
+                "currentPage": page,
+                "totalPages": total,
+            })
+
+        async def background_task():
+            try:
+                result_holder["text"] = await ocr_pdf(
+                    content,
+                    provider,
+                    model,
+                    user_id,
+                    progress_callback=progress_callback,
+                    page_numbers=page_numbers,
+                    engine=engine,
+                    max_pages=max_pages,
+                    timeout_seconds=timeout_seconds,
+                    cancel_event=cancel_event,
+                )
+                await queue.put({"type": "ocr_done"})
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                result_holder["error"] = str(e)
+                await queue.put({"type": "ocr_error", "error": str(e)})
+
+        task = asyncio.create_task(background_task())
+        await queue.put({
+            "type": "ocr_progress",
+            "message": "OCR 任务已启动，正在准备识别引擎...",
+            "phase": "parsing",
+            "percentage": 13,
+            "currentPage": 0,
+            "totalPages": max_pages,
+        })
+        try:
+            while True:
+                if time.monotonic() - started_at > timeout_seconds:
+                    cancel_event.set()
+                    task.cancel()
+                    yield {"type": "progress", "message": f"OCR 超过 {timeout_seconds} 秒未完成，已停止并使用原始解析结果", "phase": "parsing", "percentage": 20}
+                    return
+
+                if request:
+                    disconnected = False
+                    with contextlib.suppress(Exception):
+                        disconnected = await asyncio.wait_for(request.is_disconnected(), timeout=0.05)
+                    if disconnected:
+                        cancel_event.set()
+                        task.cancel()
+                        yield {"type": "progress", "message": "OCR 已取消", "phase": "parsing", "percentage": 20}
+                        return
+
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=1.0)
+                except asyncio.TimeoutError:
+                    if time.monotonic() - last_heartbeat > 2.0:
+                        last_heartbeat = time.monotonic()
+                        yield {"type": "ocr_progress", "message": "OCR 正在处理中，请稍候...", "phase": "parsing", "percentage": 14}
+                    continue
+
+                if event["type"] == "ocr_done":
+                    with contextlib.suppress(Exception):
+                        from app.services.ocrmypdf_service import get_last_ocrmypdf_evidence
+
+                        evidence = get_last_ocrmypdf_evidence()
+                        if evidence:
+                            yield {
+                                "type": "ocr_progress",
+                                "message": f"本地 OCR 证据已保存：PDF {evidence['pdf_path']}；文本 {evidence['text_path']}",
+                                "phase": "parsing",
+                                "percentage": 19,
+                                "evidence": evidence,
+                            }
+                    yield {"type": "ocr_result", "text": result_holder["text"]}
+                    return
+                if event["type"] == "ocr_error":
+                    raise RuntimeError(event["error"])
+                yield event
+        finally:
+            if not task.done():
+                cancel_event.set()
+                task.cancel()
 
     async def _stream_llm_with_progress(
         self,
@@ -728,12 +894,15 @@ class ExtractService:
         model: Optional[str] = None,
         elements: Optional[list[str]] = None,
         user_id: Optional[str] = None,
+        ocr_params: Optional[dict] = None,
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """批量对比：并行下载多个文件 → 合并 → batch 模板 → LLM 对比。"""
         from app.services.prompt_builder import get_prompt_builder
         import asyncio
 
         try:
+            ocr_params = ocr_params or {}
+            ocr_engine = ocr_params.get("ocr_engine", "auto")
             total = len(file_ids)
             yield {"type": "progress", "message": f"正在读取 {total} 个文件...", "phase": "reading", "percentage": 5}
 
@@ -741,7 +910,25 @@ class ExtractService:
             async def fetch_and_parse(fid: str) -> tuple[str, str]:
                 try:
                     content = await self.file_service.download(fid, user_id)
-                    text, _ = extract_text_from_content(content)
+                    text, needs_ocr = extract_text_from_content(content)
+                    if needs_ocr:
+                        try:
+                            from app.services.ocr_service import ocr_pdf, resolve_vision_model
+                            eff_provider, eff_model = resolve_vision_model(provider, model)
+                            ocr_text = await ocr_pdf(
+                                content,
+                                eff_provider,
+                                eff_model,
+                                user_id,
+                                page_numbers=ocr_params.get("ocr_pages"),
+                                engine=ocr_engine,
+                                max_pages=_resolve_ocr_runtime_params(ocr_params)[2],
+                                timeout_seconds=_resolve_ocr_runtime_params(ocr_params)[3],
+                            )
+                            if ocr_text.strip():
+                                text = "\n\n".join(part for part in [text.strip(), ocr_text.strip()] if part)
+                        except Exception as ocr_err:
+                            logger.warning("批量提取 OCR 失败: file_id=%s, error=%s", fid, ocr_err)
                     return fid, text
                 except Exception as e:
                     return fid, f"[读取失败: {e}]"
@@ -797,15 +984,18 @@ class ExtractService:
         provider: str = "deepseek",
         model: Optional[str] = None,
         user_id: Optional[str] = None,
+        ocr_params: Optional[dict] = None,
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """门槛分析：下载文件 → threshold 模板 + 用户资质 → LLM 逐项比对。"""
         from app.services.prompt_builder import get_prompt_builder
 
         try:
+            ocr_params = ocr_params or {}
+            ocr_engine = ocr_params.get("ocr_engine", "auto")
             yield {"type": "progress", "message": "正在读取招标文件...", "phase": "reading", "percentage": 5}
 
             content = await self.file_service.download(file_id, user_id)
-            source_hash = _versioned_source_hash(calculate_content_hash(content))
+            source_hash = _versioned_source_hash(calculate_content_hash(content), ocr_params)
             cached = await find_completed_extract(source_hash, "standard", "single", None, user_id) if user_id else None
             if cached:
                 cached_text = _format_extract_result(cached)
@@ -816,16 +1006,26 @@ class ExtractService:
                 text_content, needs_ocr = extract_text_from_content(content)
 
             if needs_ocr:
-                logger.info("门槛分析触发 OCR: file_id=%s, provider=%s", file_id, provider)
-                yield {"type": "progress", "message": "检测到图片型 PDF，正在启动 OCR 识别...", "phase": "parsing", "percentage": 12}
+                logger.info("门槛分析触发 OCR: file_id=%s, engine=%s, provider=%s", file_id, ocr_engine, provider)
+                engine_hint = "本地 OCRmyPDF" if ocr_engine in ("auto", "ocrmypdf", "local") else ("本地 PaddleOCR" if ocr_engine == "paddleocr" else f"云端视觉模型 {provider}")
+                yield {"type": "progress", "message": f"检测到图片型 PDF，正在启动 {engine_hint} 识别...", "phase": "parsing", "percentage": 12}
                 try:
                     from app.services.ocr_service import ocr_pdf, resolve_vision_model
                     eff_provider, eff_model = resolve_vision_model(provider, model)
                     if (eff_provider, eff_model) != (provider, model):
                         logger.info("OCR 模型回退: %s/%s → %s/%s", provider, model, eff_provider, eff_model)
                         yield {"type": "progress", "message": f"当前模型不支持图片识别，已切换到 {eff_provider}/{eff_model}", "phase": "parsing", "percentage": 13}
-                    ocr_text = await ocr_pdf(content, eff_provider, eff_model, user_id)
-                    logger.info("OCR 完成: %d 字符", len(ocr_text))
+                    ocr_text = await ocr_pdf(
+                        content,
+                        eff_provider,
+                        eff_model,
+                        user_id,
+                        page_numbers=ocr_params.get("ocr_pages"),
+                        engine=ocr_engine,
+                        max_pages=ocr_params.get("ocr_max_pages") or 3,
+                        timeout_seconds=ocr_params.get("ocr_timeout_seconds") or 120,
+                    )
+                    logger.info("门槛 OCR 完成: %d 字符 (engine=%s)", len(ocr_text), ocr_engine)
                     if ocr_text.strip():
                         text_content = ocr_text
                 except Exception:

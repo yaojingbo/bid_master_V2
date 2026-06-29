@@ -60,7 +60,7 @@ class TestFileService:
     async def test_download_returns_storage_content(self, service, storage):
         """下载应返回 storage.read 的内容。"""
         result = await service.download("file-1")
-        storage.read.assert_awaited_once_with("file-1")
+        storage.read.assert_awaited_once_with("file-1", None)
         assert result == b"file content"
 
     @pytest.mark.asyncio

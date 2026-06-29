@@ -43,6 +43,14 @@ class ExtractRequest(BaseModel):
     template_type: Optional[str] = "standard"  # standard | brief | batch | threshold
     elements: Optional[list[str]] = None  # 指定提取的要素 key 列表，None=全部
     mode: Optional[str] = "single"  # single | batch | threshold
+    ocr_engine: Optional[str] = "auto"  # llm | ocrmypdf | paddleocr | auto
+    ocrEngine: Optional[str] = None
+    ocr_pages: Optional[list[int]] = None
+    ocrPages: Optional[list[int]] = None
+    ocr_max_pages: Optional[int] = None
+    ocrMaxPages: Optional[int] = None
+    ocr_timeout_seconds: Optional[int] = 120
+    ocrTimeoutSeconds: Optional[int] = None
 
 
 class ElementData(BaseModel):
@@ -77,6 +85,14 @@ class BatchExtractRequest(BaseModel):
     provider: Optional[str] = "deepseek"
     model: Optional[str] = None
     elements: Optional[list[str]] = None
+    ocr_engine: Optional[str] = "auto"
+    ocrEngine: Optional[str] = None
+    ocr_pages: Optional[list[int]] = None
+    ocrPages: Optional[list[int]] = None
+    ocr_max_pages: Optional[int] = None
+    ocrMaxPages: Optional[int] = None
+    ocr_timeout_seconds: Optional[int] = 120
+    ocrTimeoutSeconds: Optional[int] = None
 
 
 class ThresholdRequest(BaseModel):
@@ -84,6 +100,14 @@ class ThresholdRequest(BaseModel):
     userQualifications: str
     provider: Optional[str] = "deepseek"
     model: Optional[str] = None
+    ocr_engine: Optional[str] = "auto"
+    ocrEngine: Optional[str] = None
+    ocr_pages: Optional[list[int]] = None
+    ocrPages: Optional[list[int]] = None
+    ocr_max_pages: Optional[int] = None
+    ocrMaxPages: Optional[int] = None
+    ocr_timeout_seconds: Optional[int] = 120
+    ocrTimeoutSeconds: Optional[int] = None
 
 
 # ============================================

@@ -138,6 +138,10 @@ function processEvent(event: Record<string, unknown>) {
     if (!event.phase) patch.currentPhase = 'analyzing';
     if (event.percentage == null) patch.percentage = state.percentage ?? 32;
     patch.progressMessage = (event.message as string) || 'AI 正在分析...';
+  } else if (event.type === 'ocr_progress') {
+    if (!event.phase) patch.currentPhase = 'parsing';
+    if (event.percentage == null) patch.percentage = state.percentage ?? 12;
+    patch.progressMessage = (event.message as string) || 'OCR 正在识别...';
   } else if (event.type === 'element') {
     if (!event.phase) patch.currentPhase = 'extracting';
     if (event.percentage == null) patch.percentage = 90;

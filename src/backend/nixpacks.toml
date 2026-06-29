@@ -1,0 +1,8 @@
+# Railway nixpacks 构建配置
+# 声明 PaddleOCR/PaddlePaddle 所需系统依赖（OpenCV、libgomp 等）
+
+[phases.setup]
+aptPkgs = ["libgomp1", "libgl1", "libglib2.0-0", "libsm6", "libxext6", "libxrender1"]
+
+[start]
+cmd = "bash -c 'export PADDLEOCR_HOME=${PADDLEOCR_HOME:-/data/paddleocr} && mkdir -p $PADDLEOCR_HOME && uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}'"
