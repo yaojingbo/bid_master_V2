@@ -67,3 +67,5 @@ notes/
 .vercel
 .env*.local
 data/
+
+task/
