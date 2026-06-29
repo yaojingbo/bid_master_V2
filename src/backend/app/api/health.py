@@ -45,6 +45,18 @@ async def health_check():
     }
 
 
+@router.get("/health/ocr")
+async def ocr_health_check():
+    """OCR runtime dependency check."""
+    from app.services.ocrmypdf_service import get_ocrmypdf_status
+
+    return {
+        "status": "healthy" if get_ocrmypdf_status()["available"] else "degraded",
+        "timestamp": datetime.utcnow().isoformat(),
+        "ocrmypdf": get_ocrmypdf_status(),
+    }
+
+
 @router.get("/")
 async def root():
     """

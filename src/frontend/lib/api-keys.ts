@@ -4,15 +4,13 @@
  */
 import { authFetch } from "@/lib/auth-fetch";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
-
 export interface ApiKeyItem {
   provider: string;
   masked_key?: string;
 }
 
 export async function getApiKeys(): Promise<ApiKeyItem[]> {
-  const res = await authFetch(`${API_BASE}/api/api-keys`);
+  const res = await authFetch(`/api/api-keys`);
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(err.detail || `获取 API Keys 失败: HTTP ${res.status}`);
@@ -22,7 +20,7 @@ export async function getApiKeys(): Promise<ApiKeyItem[]> {
 }
 
 export async function saveApiKey(provider: string, apiKey: string): Promise<void> {
-  const res = await authFetch(`${API_BASE}/api/api-keys`, {
+  const res = await authFetch(`/api/api-keys`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ provider, api_key: apiKey }),
@@ -34,7 +32,7 @@ export async function saveApiKey(provider: string, apiKey: string): Promise<void
 }
 
 export async function deleteApiKey(provider: string): Promise<void> {
-  const res = await authFetch(`${API_BASE}/api/api-keys/${provider}`, {
+  const res = await authFetch(`/api/api-keys/${provider}`, {
     method: "DELETE",
   });
   if (!res.ok) {

@@ -32,7 +32,7 @@ def _format_extract_result(record: dict) -> str:
     return _format_elements_as_markdown(record.get("elements") or [], str(record.get("content") or ""))
 
 logger = logging.getLogger(__name__)
-EXTRACTION_CACHE_VERSION = "pdf-table-ocr-v2"
+EXTRACTION_CACHE_VERSION = "pdf-table-ocr-docker-v1"
 
 
 def _resolve_ocr_runtime_params(ocr_params: dict) -> tuple[str, list[int] | None, int | None, int]:
@@ -588,7 +588,11 @@ class ExtractService:
                     yield {"type": "progress", "message": f"OCR 识别失败（{str(e)[:80]}），使用原始提取结果", "phase": "parsing", "percentage": 20}
 
             if not text_content.strip():
-                yield {"type": "error", "data": {"message": "文档内容为空或无法解析"}}
+                message = "文档内容为空或无法解析"
+                if needs_ocr:
+                    ocr_engine = (params or {}).get("ocr_engine", "auto")
+                    message = f"扫描版 PDF 需要 OCR，但 {ocr_engine} 未能识别到文字；请检查 /api/health/ocr 或后端 OCR 环境"
+                yield {"type": "error", "data": {"message": message}}
                 return
 
             yield {"type": "progress", "message": f"文档解析完成（{len(text_content)}字符），正在分析...", "phase": "parsing", "percentage": 20}
@@ -1015,15 +1019,16 @@ class ExtractService:
                     if (eff_provider, eff_model) != (provider, model):
                         logger.info("OCR 模型回退: %s/%s → %s/%s", provider, model, eff_provider, eff_model)
                         yield {"type": "progress", "message": f"当前模型不支持图片识别，已切换到 {eff_provider}/{eff_model}", "phase": "parsing", "percentage": 13}
+                    ocr_engine, ocr_pages, ocr_max_pages, ocr_timeout_seconds = _resolve_ocr_runtime_params(ocr_params)
                     ocr_text = await ocr_pdf(
                         content,
                         eff_provider,
                         eff_model,
                         user_id,
-                        page_numbers=ocr_params.get("ocr_pages"),
+                        page_numbers=ocr_pages,
                         engine=ocr_engine,
-                        max_pages=ocr_params.get("ocr_max_pages") or 3,
-                        timeout_seconds=ocr_params.get("ocr_timeout_seconds") or 120,
+                        max_pages=ocr_max_pages,
+                        timeout_seconds=ocr_timeout_seconds,
                     )
                     logger.info("门槛 OCR 完成: %d 字符 (engine=%s)", len(ocr_text), ocr_engine)
                     if ocr_text.strip():
@@ -1032,7 +1037,10 @@ class ExtractService:
                     pass  # OCR 失败不影响主流程
 
             if not text_content.strip():
-                yield {"type": "error", "data": {"message": "文档内容为空或无法解析"}}
+                message = "文档内容为空或无法解析"
+                if needs_ocr:
+                    message = f"扫描版 PDF 需要 OCR，但 {ocr_engine} 未能识别到文字；请检查 /api/health/ocr 或后端 OCR 环境"
+                yield {"type": "error", "data": {"message": message}}
                 return
 
             yield {"type": "progress", "message": f"文档解析完成（{len(text_content)}字符），正在比对分析...", "phase": "parsing", "percentage": 20}

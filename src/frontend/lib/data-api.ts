@@ -3,8 +3,6 @@
  * 对应后端 /api/data/* 路由。
  */
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
-
 // --- 类型定义 ---
 
 export interface DataStats {
@@ -81,7 +79,7 @@ interface PaginatedResult<T> {
 import { authFetch } from "@/lib/auth-fetch";
 
 async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
-  const res = await authFetch(`${API_BASE}/api/data${path}`, options);
+  const res = await authFetch(`/api/data${path}`, options);
   if (!res.ok) {
     const error = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(error.detail || `HTTP ${res.status}`);
@@ -118,7 +116,7 @@ export async function deleteFile(fileId: string): Promise<{ success: boolean }> 
 }
 
 export async function downloadFile(fileId: string): Promise<Blob> {
-  const res = await authFetch(`${API_BASE}/api/data/files/${fileId}/download`);
+  const res = await authFetch(`/api/data/files/${fileId}/download`);
   if (!res.ok) throw new Error(`下载失败: HTTP ${res.status}`);
   return res.blob();
 }
@@ -135,11 +133,11 @@ export function downloadBlob(blob: Blob, filename: string): void {
 }
 
 export function previewFileUrl(fileId: string): string {
-  return `${API_BASE}/api/data/files/${fileId}/preview`;
+  return `/api/data/files/${fileId}/preview`;
 }
 
 export async function batchDownloadFiles(fileIds: string[]): Promise<Blob> {
-  const res = await authFetch(`${API_BASE}/api/data/files/batch-download`, {
+  const res = await authFetch(`/api/data/files/batch-download`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ file_ids: fileIds }),
@@ -210,7 +208,7 @@ export async function getExtract(resultId: string): Promise<ExtractResultRecord>
 }
 
 export async function exportExtractJson(resultId: string): Promise<Blob> {
-  const res = await authFetch(`${API_BASE}/api/data/extracts/${resultId}/export-json`);
+  const res = await authFetch(`/api/data/extracts/${resultId}/export-json`);
   if (!res.ok) throw new Error(`导出 JSON 失败: HTTP ${res.status}`);
   return res.blob();
 }

@@ -7,8 +7,8 @@
  */
 import { useAuthStore } from "@/stores/auth-store";
 import { useLogStore } from "@/stores/log-store";
+import { resolveApiUrl } from "@/lib/api-base";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
 const AUTH_DISABLED = process.env.NEXT_PUBLIC_AUTH_DISABLED === "true";
 
 let refreshPromise: Promise<string | null> | null = null;
@@ -46,7 +46,7 @@ export async function authFetch(url: string, options?: RequestInit): Promise<Res
     headers.set("Authorization", `Bearer ${accessToken}`);
   }
 
-  const fullUrl = url.startsWith("/") ? `${API_BASE}${url}` : url;
+  const fullUrl = resolveApiUrl(url);
   const method = options?.method || "GET";
   const shortUrl = url.startsWith("/") ? url : new URL(url).pathname;
 
@@ -119,7 +119,7 @@ export async function authFetchSSE(url: string, options?: RequestInit): Promise<
     headers.set("Authorization", `Bearer ${accessToken}`);
   }
 
-  const fullUrl = url.startsWith("/") ? `${API_BASE}${url}` : url;
+  const fullUrl = resolveApiUrl(url);
   const method = options?.method || "GET";
   const shortUrl = url.startsWith("/") ? url : new URL(url).pathname;
 

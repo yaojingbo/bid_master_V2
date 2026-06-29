@@ -87,6 +87,17 @@ class Settings(BaseSettings):
     resend_from: str = "Bid Master <noreply@bidmaster.asia>"
     frontend_url: str = "http://localhost:3000"
 
+    # CORS
+    cors_origins: str = "http://localhost:3000,http://localhost:8000,https://bid-master-web.vercel.app,https://bid-master-v2.vercel.app"
+
+    # OCR
+    ocr_save_evidence: bool = True
+    ocr_evidence_dir: str = "tmp/ocr-evidence"
+
+    @property
+    def cors_origin_list(self) -> list[str]:
+        return [origin.strip().rstrip("/") for origin in self.cors_origins.split(",") if origin.strip()]
+
 @lru_cache()
 def get_settings() -> Settings:
     """Get cached settings instance."""

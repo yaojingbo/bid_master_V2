@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import io
 import logging
+import os
 import shutil
 import subprocess
 import tempfile
@@ -18,7 +19,6 @@ logger = logging.getLogger(__name__)
 
 _DEFAULT_LANGUAGE = "chi_sim+eng"
 _DEFAULT_MAX_PAGES = 15
-_EVIDENCE_DIR = Path("tmp/ocr-evidence")
 _LAST_EVIDENCE: dict[str, str] | None = None
 
 
@@ -26,13 +26,18 @@ def get_last_ocrmypdf_evidence() -> dict[str, str] | None:
     return _LAST_EVIDENCE
 
 
-def _save_evidence(pdf_bytes: bytes, text: str) -> dict[str, str]:
+def _save_evidence(pdf_bytes: bytes, text: str) -> dict[str, str] | None:
     global _LAST_EVIDENCE
 
-    _EVIDENCE_DIR.mkdir(parents=True, exist_ok=True)
+    if os.getenv("OCR_SAVE_EVIDENCE", "true").lower() not in {"1", "true", "yes", "on"}:
+        _LAST_EVIDENCE = None
+        return None
+
+    evidence_dir = Path(os.getenv("OCR_EVIDENCE_DIR", "tmp/ocr-evidence"))
+    evidence_dir.mkdir(parents=True, exist_ok=True)
     stem = f"{datetime.now().strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}"
-    pdf_path = _EVIDENCE_DIR / f"{stem}.pdf"
-    text_path = _EVIDENCE_DIR / f"{stem}.txt"
+    pdf_path = evidence_dir / f"{stem}.pdf"
+    text_path = evidence_dir / f"{stem}.txt"
     pdf_path.write_bytes(pdf_bytes)
     text_path.write_text(text, encoding="utf-8")
     _LAST_EVIDENCE = {
@@ -43,23 +48,52 @@ def _save_evidence(pdf_bytes: bytes, text: str) -> dict[str, str]:
     return _LAST_EVIDENCE
 
 
+def get_ocrmypdf_status() -> dict[str, object]:
+    ocrmypdf_path = shutil.which("ocrmypdf")
+    tesseract_path = shutil.which("tesseract")
+    languages: list[str] = []
+    language_error = ""
+
+    if tesseract_path:
+        try:
+            result = subprocess.run(
+                ["tesseract", "--list-langs"],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            output = "\n".join([result.stdout, result.stderr])
+            languages = [line.strip() for line in output.splitlines() if line.strip() and not line.lower().startswith("list of available")]
+            if result.returncode != 0:
+                language_error = output.strip()[:300]
+        except Exception as exc:
+            language_error = str(exc)
+
+    missing = []
+    if not ocrmypdf_path:
+        missing.append("ocrmypdf")
+    if not tesseract_path:
+        missing.append("tesseract")
+    if "chi_sim" not in languages:
+        missing.append("chi_sim")
+    if "eng" not in languages:
+        missing.append("eng")
+
+    return {
+        "available": not missing,
+        "ocrmypdf": bool(ocrmypdf_path),
+        "tesseract": bool(tesseract_path),
+        "chi_sim": "chi_sim" in languages,
+        "eng": "eng" in languages,
+        "languages": languages,
+        "missing": missing,
+        "error": language_error,
+    }
+
+
 def is_ocrmypdf_available() -> bool:
-    if not shutil.which("ocrmypdf") or not shutil.which("tesseract"):
-        return False
-
-    try:
-        result = subprocess.run(
-            ["tesseract", "--list-langs"],
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-    except Exception as exc:
-        logger.warning("Tesseract 语言包检查失败: %s", exc)
-        return False
-
-    return "chi_sim" in result.stdout.splitlines()
+    return bool(get_ocrmypdf_status()["available"])
 
 
 def _page_range(page_numbers: Optional[list[int]], max_pages: int | None) -> str | None:
@@ -117,7 +151,9 @@ async def ocrmypdf_pdf(
     cancel_event: asyncio.Event | None = None,
 ) -> str:
     if not is_ocrmypdf_available():
-        raise RuntimeError("OCRmyPDF 或 Tesseract 中文语言包未安装")
+        status = get_ocrmypdf_status()
+        missing = ", ".join(str(item) for item in status["missing"])
+        raise RuntimeError(f"OCRmyPDF 环境不可用，缺少: {missing}")
 
     pages = _page_range(page_numbers, max_pages)
     page_limit = max_pages
